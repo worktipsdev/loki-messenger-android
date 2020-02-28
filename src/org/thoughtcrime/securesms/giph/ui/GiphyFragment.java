@@ -14,10 +14,8 @@ import android.support.v7.widget.StaggeredGridLayoutManager;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ProgressBar;
 import android.widget.TextView;
 
-import network.loki.messenger.R;
 import org.thoughtcrime.securesms.giph.model.GiphyImage;
 import org.thoughtcrime.securesms.giph.net.GiphyLoader;
 import org.thoughtcrime.securesms.giph.util.InfiniteScrollListener;
@@ -28,20 +26,22 @@ import org.thoughtcrime.securesms.util.ViewUtil;
 import java.util.LinkedList;
 import java.util.List;
 
+import network.loki.messenger.R;
+
 public abstract class GiphyFragment extends Fragment implements LoaderManager.LoaderCallbacks<List<GiphyImage>>, GiphyAdapter.OnItemClickListener {
 
   private static final String TAG = GiphyFragment.class.getSimpleName();
 
   private GiphyAdapter                     giphyAdapter;
   private RecyclerView                     recyclerView;
-  private ProgressBar                      loadingProgress;
+  private View                             loadingProgress;
   private TextView                         noResultsView;
   private GiphyAdapter.OnItemClickListener listener;
 
   protected String searchString;
 
   @Override
-  public View onCreateView(LayoutInflater inflater, ViewGroup viewGroup, Bundle bundle) {
+  public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup viewGroup, Bundle bundle) {
     ViewGroup container = ViewUtil.inflate(inflater, viewGroup, R.layout.giphy_fragment);
     this.recyclerView    = ViewUtil.findById(container, R.id.giphy_list);
     this.loadingProgress = ViewUtil.findById(container, R.id.loading_progress);
@@ -66,7 +66,7 @@ public abstract class GiphyFragment extends Fragment implements LoaderManager.Lo
   }
 
   @Override
-  public void onLoadFinished(Loader<List<GiphyImage>> loader, @NonNull List<GiphyImage> data) {
+  public void onLoadFinished(@NonNull Loader<List<GiphyImage>> loader, @NonNull List<GiphyImage> data) {
     this.loadingProgress.setVisibility(View.GONE);
 
     if (data.isEmpty()) noResultsView.setVisibility(View.VISIBLE);
@@ -76,7 +76,7 @@ public abstract class GiphyFragment extends Fragment implements LoaderManager.Lo
   }
 
   @Override
-  public void onLoaderReset(Loader<List<GiphyImage>> loader) {
+  public void onLoaderReset(@NonNull Loader<List<GiphyImage>> loader) {
     noResultsView.setVisibility(View.GONE);
     this.giphyAdapter.setImages(new LinkedList<GiphyImage>());
   }

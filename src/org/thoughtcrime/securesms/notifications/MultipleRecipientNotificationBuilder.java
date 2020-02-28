@@ -7,9 +7,9 @@ import android.content.Intent;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.NotificationCompat;
+import android.text.SpannableStringBuilder;
 
-import org.thoughtcrime.securesms.ConversationListActivity;
-import network.loki.messenger.R;
+import org.thoughtcrime.securesms.loki.redesign.activities.HomeActivity;
 import org.thoughtcrime.securesms.preferences.widgets.NotificationPrivacyPreference;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
@@ -17,6 +17,8 @@ import org.thoughtcrime.securesms.util.Util;
 
 import java.util.LinkedList;
 import java.util.List;
+
+import network.loki.messenger.R;
 
 public class MultipleRecipientNotificationBuilder extends AbstractNotificationBuilder {
 
@@ -28,7 +30,7 @@ public class MultipleRecipientNotificationBuilder extends AbstractNotificationBu
     setColor(context.getResources().getColor(R.color.textsecure_primary));
     setSmallIcon(R.drawable.ic_notification);
     setContentTitle(context.getString(R.string.app_name));
-    setContentIntent(PendingIntent.getActivity(context, 0, new Intent(context, ConversationListActivity.class), 0));
+    setContentIntent(PendingIntent.getActivity(context, 0, new Intent(context, HomeActivity.class), 0));
     setCategory(NotificationCompat.CATEGORY_MESSAGE);
     setGroupSummary(true);
 
@@ -44,10 +46,14 @@ public class MultipleRecipientNotificationBuilder extends AbstractNotificationBu
     setNumber(messageCount);
   }
 
-  public void setMostRecentSender(Recipient recipient) {
+  public void setMostRecentSender(Recipient recipient, Recipient threadRecipient) {
+    String displayName = recipient.toShortString();
+    if (threadRecipient.isGroupRecipient()) {
+      displayName = NotificationUtilities.getOpenGroupDisplayName(recipient, threadRecipient, context);
+    }
     if (privacy.isDisplayContact()) {
       setContentText(context.getString(R.string.MessageNotifier_most_recent_from_s,
-                                       recipient.toShortString()));
+              displayName));
     }
 
     if (recipient.getNotificationChannel() != null) {
@@ -63,11 +69,20 @@ public class MultipleRecipientNotificationBuilder extends AbstractNotificationBu
     extend(new NotificationCompat.WearableExtender().addAction(markAllAsReadAction));
   }
 
-  public void addMessageBody(@NonNull Recipient sender, @Nullable CharSequence body) {
+  public void addMessageBody(@NonNull Recipient sender, Recipient threadRecipient, @Nullable CharSequence body) {
+    String displayName = sender.toShortString();
+    if (threadRecipient.isGroupRecipient()) {
+      displayName = NotificationUtilities.getOpenGroupDisplayName(sender, threadRecipient, context);
+    }
     if (privacy.isDisplayMessage()) {
-      messageBodies.add(getStyledMessage(sender, body));
+      SpannableStringBuilder builder = new SpannableStringBuilder();
+      builder.append(Util.getBoldedString(displayName));
+      builder.append(": ");
+      builder.append(body == null ? "" : body);
+
+      messageBodies.add(builder);
     } else if (privacy.isDisplayContact()) {
-      messageBodies.add(Util.getBoldedString(sender.toShortString()));
+      messageBodies.add(Util.getBoldedString(displayName));
     }
 
     if (privacy.isDisplayContact() && sender.getContactUri() != null) {

@@ -5,6 +5,7 @@ import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 
 import org.thoughtcrime.securesms.database.AttachmentDatabase;
+import org.thoughtcrime.securesms.stickers.StickerLocator;
 
 public abstract class Attachment {
 
@@ -40,10 +41,16 @@ public abstract class Attachment {
   @Nullable
   private final String caption;
 
+  @Nullable
+  private final StickerLocator stickerLocator;
+
+  // Loki
+  private final String url;
+
   public Attachment(@NonNull String contentType, int transferState, long size, @Nullable String fileName,
                     @Nullable String location, @Nullable String key, @Nullable String relay,
                     @Nullable byte[] digest, @Nullable String fastPreflightId, boolean voiceNote,
-                    int width, int height, boolean quote, @Nullable String caption)
+                    int width, int height, boolean quote, @Nullable String caption, @Nullable StickerLocator stickerLocator, String url)
   {
     this.contentType     = contentType;
     this.transferState   = transferState;
@@ -58,7 +65,9 @@ public abstract class Attachment {
     this.width           = width;
     this.height          = height;
     this.quote           = quote;
+    this.stickerLocator  = stickerLocator;
     this.caption         = caption;
+    this.url             = url;
   }
 
   @Nullable
@@ -131,7 +140,17 @@ public abstract class Attachment {
     return quote;
   }
 
+  public boolean isSticker() {
+    return stickerLocator != null;
+  }
+
+  public @Nullable StickerLocator getSticker() {
+    return stickerLocator;
+  }
+
   public @Nullable String getCaption() {
     return caption;
   }
+
+  public String getUrl() { return url; }
 }

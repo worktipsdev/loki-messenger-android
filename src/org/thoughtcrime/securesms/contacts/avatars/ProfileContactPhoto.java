@@ -8,7 +8,6 @@ import android.support.annotation.Nullable;
 
 import org.thoughtcrime.securesms.database.Address;
 import org.thoughtcrime.securesms.profiles.AvatarHelper;
-import org.thoughtcrime.securesms.util.Conversions;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -17,7 +16,7 @@ import java.security.MessageDigest;
 public class ProfileContactPhoto implements ContactPhoto {
 
   private final @NonNull Address address;
-  private final @NonNull String  avatarObject;
+  public  final @NonNull String  avatarObject;
 
   public ProfileContactPhoto(@NonNull Address address, @NonNull String avatarObject) {
     this.address      = address;
@@ -40,7 +39,7 @@ public class ProfileContactPhoto implements ContactPhoto {
   }
 
   @Override
-  public void updateDiskCacheKey(MessageDigest messageDigest) {
+  public void updateDiskCacheKey(@NonNull MessageDigest messageDigest) {
     messageDigest.update(address.serialize().getBytes());
     messageDigest.update(avatarObject.getBytes());
   }

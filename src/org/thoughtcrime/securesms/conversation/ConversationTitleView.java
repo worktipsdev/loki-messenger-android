@@ -14,12 +14,13 @@ import android.widget.TextView;
 import com.annimon.stream.Collectors;
 import com.annimon.stream.Stream;
 
-import network.loki.messenger.R;
 import org.thoughtcrime.securesms.components.AvatarImageView;
 import org.thoughtcrime.securesms.mms.GlideRequests;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.thoughtcrime.securesms.util.ViewUtil;
+
+import network.loki.messenger.R;
 
 public class ConversationTitleView extends RelativeLayout {
 
@@ -27,7 +28,6 @@ public class ConversationTitleView extends RelativeLayout {
   private static final String TAG = ConversationTitleView.class.getSimpleName();
 
   private View            content;
-  private ImageView       back;
   private AvatarImageView avatar;
   private TextView        title;
   private TextView        subtitle;
@@ -47,7 +47,6 @@ public class ConversationTitleView extends RelativeLayout {
   public void onFinishInflate() {
     super.onFinishInflate();
 
-    this.back              = ViewUtil.findById(this, R.id.up_button);
     this.content           = ViewUtil.findById(this, R.id.content);
     this.title             = ViewUtil.findById(this, R.id.title);
     this.subtitle          = ViewUtil.findById(this, R.id.subtitle);
@@ -94,10 +93,6 @@ public class ConversationTitleView extends RelativeLayout {
     this.avatar.setOnLongClickListener(listener);
   }
 
-  public void setOnBackClickedListener(@Nullable OnClickListener listener) {
-    this.back.setOnClickListener(listener);
-  }
-
   private void setComposeTitle() {
     this.title.setText(R.string.ConversationActivity_compose_message);
     this.subtitle.setText(null);
@@ -120,7 +115,7 @@ public class ConversationTitleView extends RelativeLayout {
                                 .map(Recipient::toShortString)
                                 .collect(Collectors.joining(", ")));
 
-    this.subtitle.setVisibility(View.VISIBLE);
+    this.subtitle.setVisibility(View.GONE);
     this.subtitleContainer.setVisibility(VISIBLE);
   }
 
@@ -146,10 +141,14 @@ public class ConversationTitleView extends RelativeLayout {
   private void setContactRecipientTitle(Recipient recipient) {
     this.title.setText(recipient.getName());
 
-    if (recipient.getCustomLabel() != null) this.subtitle.setText(recipient.getCustomLabel());
-    else                                    this.subtitle.setText(recipient.getAddress().serialize());
-
-    this.subtitle.setVisibility(View.VISIBLE);
-    this.subtitleContainer.setVisibility(VISIBLE);
+    if (TextUtils.isEmpty(recipient.getCustomLabel())) {
+      this.subtitle.setText(null);
+      this.subtitle.setVisibility(View.GONE);
+      this.subtitleContainer.setVisibility(View.GONE);
+    } else {
+      this.subtitle.setText(recipient.getCustomLabel());
+      this.subtitle.setVisibility(View.VISIBLE);
+      this.subtitleContainer.setVisibility(View.VISIBLE);
+    }
   }
 }

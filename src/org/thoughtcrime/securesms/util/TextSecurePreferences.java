@@ -12,12 +12,10 @@ import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.NotificationCompat;
 
-import org.thoughtcrime.securesms.jobmanager.impl.SqlCipherMigrationConstraintObserver;
-import org.thoughtcrime.securesms.logging.Log;
-
 import org.greenrobot.eventbus.EventBus;
-import network.loki.messenger.R;
+import org.thoughtcrime.securesms.jobmanager.impl.SqlCipherMigrationConstraintObserver;
 import org.thoughtcrime.securesms.lock.RegistrationLockReminders;
+import org.thoughtcrime.securesms.logging.Log;
 import org.thoughtcrime.securesms.preferences.widgets.NotificationPrivacyPreference;
 import org.whispersystems.libsignal.util.Medium;
 
@@ -27,6 +25,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+
+import network.loki.messenger.R;
 
 public class TextSecurePreferences {
 
@@ -121,6 +121,7 @@ public class TextSecurePreferences {
   private static final String PROFILE_KEY_PREF                 = "pref_profile_key";
   private static final String PROFILE_NAME_PREF                = "pref_profile_name";
   private static final String PROFILE_AVATAR_ID_PREF           = "pref_profile_avatar_id";
+  private static final String PROFILE_AVATAR_URL_PREF          = "pref_profile_avatar_url";
   public  static final String READ_RECEIPTS_PREF               = "pref_read_receipts";
   public  static final String INCOGNITO_KEYBORAD_PREF          = "pref_incognito_keyboard";
   private static final String UNAUTHORIZED_RECEIVED            = "pref_unauthorized_received";
@@ -179,6 +180,10 @@ public class TextSecurePreferences {
   public static final String LINK_PREVIEWS = "pref_link_previews";
 
   private static final String GIF_GRID_LAYOUT = "pref_gif_grid_layout";
+
+  private static final String SEEN_STICKER_INTRO_TOOLTIP = "pref_seen_sticker_intro_tooltip";
+
+  private static final String MEDIA_KEYBOARD_MODE = "pref_media_keyboard_mode";
 
   public static boolean isScreenLockEnabled(@NonNull Context context) {
     return getBooleanPreference(context, SCREEN_LOCK, false);
@@ -342,7 +347,7 @@ public class TextSecurePreferences {
   }
 
   public static boolean isIncognitoKeyboardEnabled(Context context) {
-    return getBooleanPreference(context, INCOGNITO_KEYBORAD_PREF, false);
+    return getBooleanPreference(context, INCOGNITO_KEYBORAD_PREF, true);
   }
 
   public static boolean isReadReceiptsEnabled(Context context) {
@@ -362,7 +367,11 @@ public class TextSecurePreferences {
   }
 
   public static boolean isLinkPreviewsEnabled(Context context) {
-    return getBooleanPreference(context, LINK_PREVIEWS, true);
+    return getBooleanPreference(context, LINK_PREVIEWS, false);
+  }
+
+  public static void setLinkPreviewsEnabled(Context context, boolean enabled) {
+    setBooleanPreference(context, LINK_PREVIEWS, enabled);
   }
 
   public static boolean isGifSearchInGridLayout(Context context) {
@@ -395,6 +404,14 @@ public class TextSecurePreferences {
 
   public static int getProfileAvatarId(Context context) {
     return getIntegerPreference(context, PROFILE_AVATAR_ID_PREF, 0);
+  }
+
+  public static void setProfileAvatarUrl(Context context, String url) {
+    setStringPreference(context, PROFILE_AVATAR_URL_PREF, url);
+  }
+
+  public static String getProfileAvatarUrl(Context context) {
+    return getStringPreference(context, PROFILE_AVATAR_URL_PREF, null);
   }
 
   public static int getNotificationPriority(Context context) {
@@ -509,13 +526,13 @@ public class TextSecurePreferences {
 
   public static void setFcmToken(Context context, String registrationId) {
     setStringPreference(context, GCM_REGISTRATION_ID_PREF, registrationId);
-    setIntegerPrefrence(context, GCM_REGISTRATION_ID_VERSION_PREF, Util.getCurrentApkReleaseVersion(context));
+    setIntegerPrefrence(context, GCM_REGISTRATION_ID_VERSION_PREF, Util.getCanonicalVersionCode());
   }
 
   public static String getFcmToken(Context context) {
     int storedRegistrationIdVersion = getIntegerPreference(context, GCM_REGISTRATION_ID_VERSION_PREF, 0);
 
-    if (storedRegistrationIdVersion != Util.getCurrentApkReleaseVersion(context)) {
+    if (storedRegistrationIdVersion != Util.getCanonicalVersionCode()) {
       return null;
     } else {
       return getStringPreference(context, GCM_REGISTRATION_ID_PREF, null);
@@ -540,6 +557,10 @@ public class TextSecurePreferences {
 
   public static void setLocalRegistrationId(Context context, int registrationId) {
     setIntegerPrefrence(context, LOCAL_REGISTRATION_ID_PREF, registrationId);
+  }
+
+  public static void removeLocalRegistrationId(Context context) {
+    removePreference(context, LOCAL_REGISTRATION_ID_PREF);
   }
 
   public static boolean isInThreadNotifications(Context context) {
@@ -584,7 +605,9 @@ public class TextSecurePreferences {
   }
 
   public static boolean isUnidentifiedDeliveryEnabled(Context context) {
-    return getBooleanPreference(context, UNIDENTIFIED_DELIVERY_ENABLED, true);
+    // Loki - Always enable unidentified sender
+    return true;
+    // return getBooleanPreference(context, UNIDENTIFIED_DELIVERY_ENABLED, true);
   }
 
   public static long getSignedPreKeyRotationTime(Context context) {
@@ -632,7 +655,11 @@ public class TextSecurePreferences {
   }
 
   public static void setLocalNumber(Context context, String localNumber) {
-    setStringPreference(context, LOCAL_NUMBER_PREF, localNumber);
+    setStringPreference(context, LOCAL_NUMBER_PREF, localNumber.toLowerCase());
+  }
+
+  public static void removeLocalNumber(Context context) {
+    removePreference(context, LOCAL_NUMBER_PREF);
   }
 
   public static String getPushServerPassword(Context context) {
@@ -1078,6 +1105,23 @@ public class TextSecurePreferences {
     setBooleanPreference(context, NEEDS_MESSAGE_PULL, needsMessagePull);
   }
 
+  public static boolean hasSeenStickerIntroTooltip(Context context) {
+    return getBooleanPreference(context, SEEN_STICKER_INTRO_TOOLTIP, false);
+  }
+
+  public static void setHasSeenStickerIntroTooltip(Context context, boolean seenStickerTooltip) {
+    setBooleanPreference(context, SEEN_STICKER_INTRO_TOOLTIP, seenStickerTooltip);
+  }
+
+  public static void setMediaKeyboardMode(Context context, MediaKeyboardMode mode) {
+    setStringPreference(context, MEDIA_KEYBOARD_MODE, mode.name());
+  }
+
+  public static MediaKeyboardMode getMediaKeyboardMode(Context context) {
+    String name = getStringPreference(context, MEDIA_KEYBOARD_MODE, MediaKeyboardMode.EMOJI.name());
+    return MediaKeyboardMode.valueOf(name);
+  }
+
   public static void setBooleanPreference(Context context, String key, boolean value) {
     PreferenceManager.getDefaultSharedPreferences(context).edit().putBoolean(key, value).apply();
   }
@@ -1127,11 +1171,104 @@ public class TextSecurePreferences {
     }
   }
 
+  // NEVER rename these -- they're persisted by name
+  public enum MediaKeyboardMode {
+    EMOJI, STICKER
+  }
+
+  // region Loki
   public static long getBackgroundPollTime(Context context) {
     return getLongPreference(context, "background_poll_time", 0L);
   }
 
   public static void setBackgroundPollTime(Context context, long backgroundPollTime) {
     setLongPreference(context, "background_poll_time", backgroundPollTime);
+  }
+
+  public static long getPublicChatBackgroundPollTime(Context context) {
+    return getLongPreference(context, "public_chat_background_poll_time", 0L);
+  }
+
+  public static void setPublicChatBackgroundPollTime(Context context, long backgroundPollTime) {
+    setLongPreference(context, "public_chat_background_poll_time", backgroundPollTime);
+  }
+
+  public static boolean isChatSetUp(Context context, String id) {
+    return getBooleanPreference(context, "is_chat_set_up" + "?chat=" + id, false);
+  }
+
+  public static void markChatSetUp(Context context, String id) {
+    setBooleanPreference(context, "is_chat_set_up" + "?chat=" + id, true);
+  }
+
+  public static String getMasterHexEncodedPublicKey(Context context) {
+    return getStringPreference(context, "master_hex_encoded_public_key", null);
+  }
+
+  public static void setMasterHexEncodedPublicKey(Context context, String masterHexEncodedPublicKey) {
+    setStringPreference(context, "master_hex_encoded_public_key", masterHexEncodedPublicKey.toLowerCase());
+  }
+
+  public static Boolean getHasViewedSeed(Context context) {
+    return getBooleanPreference(context, "has_viewed_seed", false);
+  }
+
+  public static void setHasViewedSeed(Context context, Boolean hasViewedSeed) {
+    setBooleanPreference(context, "has_viewed_seed", hasViewedSeed);
+  }
+
+  public static void setResetDatabase(Context context, boolean resetDatabase) {
+    // We do it this way so that it gets persisted in storage straight away
+    PreferenceManager.getDefaultSharedPreferences(context).edit().putBoolean("database_reset", resetDatabase).commit();
+  }
+
+  public static boolean resetDatabase(Context context) {
+    return getBooleanPreference(context, "database_reset", false);
+  }
+
+  public static void setDatabaseResetFromUnpair(Context context, boolean value) {
+    // We do it this way so that it gets persisted in storage straight away
+    PreferenceManager.getDefaultSharedPreferences(context).edit().putBoolean("database_reset_unpair", value).commit();
+  }
+
+  public static boolean databaseResetFromUnpair(Context context) {
+    return getBooleanPreference(context, "database_reset_unpair", false);
+  }
+
+  public static void setNeedsIsRevokedSlaveDeviceCheck(Context context, boolean value) {
+    setBooleanPreference(context, "needs_revocation", value);
+  }
+
+  public static boolean getNeedsIsRevokedSlaveDeviceCheck(Context context) {
+    return getBooleanPreference(context, "needs_revocation", false);
+  }
+
+  public static void setRestorationTime(Context context, long time) {
+    setLongPreference(context, "restoration_time", time);
+  }
+
+  public static long getRestorationTime(Context context) {
+    return getLongPreference(context, "restoration_time", 0);
+  }
+
+  public static boolean getHasSeenOpenGroupSuggestionSheet(Context context) {
+    return getBooleanPreference(context, "has_seen_open_group_suggestion_sheet", false);
+  }
+
+  public static void setHasSeenOpenGroupSuggestionSheet(Context context) {
+    setBooleanPreference(context, "has_seen_open_group_suggestion_sheet", true);
+  }
+
+  public static long getLastProfilePictureUpload(Context context) {
+    return getLongPreference(context, "last_profile_picture_upload", 0);
+  }
+
+  public static void setLastProfilePictureUpload(Context context, long newValue) {
+    setLongPreference(context, "last_profile_picture_upload", newValue);
+  }
+  // endregion
+
+  public static void clearAll(Context context) {
+    PreferenceManager.getDefaultSharedPreferences(context).edit().clear().commit();
   }
 }

@@ -29,6 +29,9 @@ import org.whispersystems.signalservice.api.messages.SignalServiceDataMessage;
 import org.whispersystems.signalservice.api.messages.multidevice.SignalServiceSyncMessage;
 import org.whispersystems.signalservice.api.push.SignalServiceAddress;
 import org.whispersystems.signalservice.api.push.exceptions.UnregisteredUserException;
+import org.whispersystems.signalservice.loki.api.LokiDeviceLinkUtilities;
+import org.whispersystems.signalservice.loki.messaging.LokiSyncMessage;
+import org.whispersystems.signalservice.loki.utilities.PromiseUtil;
 
 import java.io.IOException;
 
@@ -40,59 +43,92 @@ public class PushTextSendJob extends PushSendJob implements InjectableType {
 
   private static final String TAG = PushTextSendJob.class.getSimpleName();
 
+  private static final String KEY_TEMPLATE_MESSAGE_ID = "template_message_id";
   private static final String KEY_MESSAGE_ID = "message_id";
+  private static final String KEY_DESTINATION = "destination";
+  private static final String KEY_IS_FRIEND_REQUEST = "is_friend_request";
+  private static final String KEY_CUSTOM_FR_MESSAGE = "custom_friend_request_message";
+  private static final String KEY_SHOULD_SEND_SYNC_MESSAGE = "should_send_sync_message";
 
   @Inject SignalServiceMessageSender messageSender;
 
-  private long messageId;
+  private long messageId; // The message ID
+  private long templateMessageId; // The message ID of the message to template this send job from
 
-  public PushTextSendJob(long messageId, Address destination) {
-    this(constructParameters(destination), messageId);
+  // Loki - Multi device
+  private Address destination; // Destination to check whether this is another device we're sending to
+  private boolean isFriendRequest; // Whether this is a friend request message
+  private String customFriendRequestMessage; // If this isn't set then we use the message body
+  private boolean shouldSendSyncMessage;
+
+  public PushTextSendJob(long messageId, Address destination) { this(messageId, messageId, destination, false); }
+  public PushTextSendJob(long templateMessageId, long messageId, Address destination, boolean shouldSendSyncMessage) { this(templateMessageId, messageId, destination, false, null, shouldSendSyncMessage); }
+  public PushTextSendJob(long templateMessageId, long messageId, Address destination, boolean isFriendRequest, String customFriendRequestMessage, boolean shouldSendSyncMessage) {
+    this(constructParameters(destination), templateMessageId, messageId, destination, isFriendRequest, customFriendRequestMessage, shouldSendSyncMessage);
   }
 
-  private PushTextSendJob(@NonNull Job.Parameters parameters, long messageId) {
+  private PushTextSendJob(@NonNull Job.Parameters parameters, long templateMessageId, long messageId, Address destination, boolean isFriendRequest, String customFriendRequestMessage, boolean shouldSendSyncMessage) {
     super(parameters);
+    this.templateMessageId = templateMessageId;
     this.messageId = messageId;
+    this.destination = destination;
+    this.isFriendRequest = isFriendRequest;
+    this.customFriendRequestMessage = customFriendRequestMessage;
+    this.shouldSendSyncMessage = shouldSendSyncMessage;
   }
 
   @Override
   public @NonNull Data serialize() {
-    return new Data.Builder().putLong(KEY_MESSAGE_ID, messageId).build();
+    Data.Builder builder = new Data.Builder()
+            .putLong(KEY_TEMPLATE_MESSAGE_ID, templateMessageId)
+            .putLong(KEY_MESSAGE_ID, messageId)
+            .putString(KEY_DESTINATION, destination.serialize())
+            .putBoolean(KEY_IS_FRIEND_REQUEST, isFriendRequest)
+            .putBoolean(KEY_SHOULD_SEND_SYNC_MESSAGE, shouldSendSyncMessage);
+
+    if (customFriendRequestMessage != null) { builder.putString(KEY_CUSTOM_FR_MESSAGE, customFriendRequestMessage); }
+    return builder.build();
   }
 
-  @NonNull
   @Override
-  public String getFactoryKey() {
+  public @NonNull String getFactoryKey() {
     return KEY;
   }
 
   @Override
   public void onAdded() {
-    DatabaseFactory.getSmsDatabase(context).markAsSending(messageId);
+    if (messageId >= 0) {
+      DatabaseFactory.getSmsDatabase(context).markAsSending(messageId);
+    }
   }
 
   @Override
   public void onPushSend() throws NoSuchMessageException, RetryLaterException {
     ExpiringMessageManager expirationManager = ApplicationContext.getInstance(context).getExpiringMessageManager();
     SmsDatabase            database          = DatabaseFactory.getSmsDatabase(context);
-    SmsMessageRecord       record            = database.getMessage(messageId);
+    SmsMessageRecord       record            = database.getMessage(templateMessageId);
 
-    if (!record.isPending() && !record.isFailed()) {
-      warn(TAG, "Message " + messageId + " was already sent. Ignoring.");
+    Recipient recordRecipient  = record.getRecipient().resolve();
+    boolean hasSameDestination = destination.equals(recordRecipient.getAddress());
+
+    if (hasSameDestination && !record.isPending() && !record.isFailed()) {
+      warn(TAG, "Message " + templateMessageId + " was already sent. Ignoring.");
       return;
     }
 
     try {
-      log(TAG, "Sending message: " + messageId);
+      log(TAG, "Sending message: " + templateMessageId + (hasSameDestination ? "" : "to another device."));
 
-      Recipient              recipient  = record.getRecipient().resolve();
+      Recipient              recipient = Recipient.from(context, destination, false);
       byte[]                 profileKey = recipient.getProfileKey();
       UnidentifiedAccessMode accessMode = recipient.getUnidentifiedAccessMode();
 
       boolean unidentified = deliver(record);
 
-      database.markAsSent(messageId, true);
-      database.markUnidentified(messageId, unidentified);
+      if (messageId >= 0) {
+        database.markAsSent(messageId, true);
+        database.markUnidentified(messageId, unidentified);
+      }
 
       if (recipient.isLocalNumber()) {
         SyncMessageId id = new SyncMessageId(recipient.getAddress(), record.getDateSent());
@@ -113,42 +149,49 @@ public class PushTextSendJob extends PushSendJob implements InjectableType {
         }
       }
 
-      if (record.getExpiresIn() > 0) {
+      if (record.getExpiresIn() > 0 && messageId >= 0) {
         database.markExpireStarted(messageId);
         expirationManager.scheduleDeletion(record.getId(), record.isMms(), record.getExpiresIn());
       }
 
-      log(TAG, "Sent message: " + messageId);
+      log(TAG, "Sent message: " + templateMessageId + (hasSameDestination ? "" : "to another device."));
 
     } catch (InsecureFallbackApprovalException e) {
       warn(TAG, "Failure", e);
-      database.markAsPendingInsecureSmsFallback(record.getId());
-      MessageNotifier.notifyMessageDeliveryFailed(context, record.getRecipient(), record.getThreadId());
-      ApplicationContext.getInstance(context).getJobManager().add(new DirectoryRefreshJob(false));
+      if (messageId >= 0) {
+        database.markAsPendingInsecureSmsFallback(record.getId());
+        MessageNotifier.notifyMessageDeliveryFailed(context, record.getRecipient(), record.getThreadId());
+        ApplicationContext.getInstance(context).getJobManager().add(new DirectoryRefreshJob(false));
+      }
     } catch (UntrustedIdentityException e) {
       warn(TAG, "Failure", e);
-      database.addMismatchedIdentity(record.getId(), Address.fromSerialized(e.getE164Number()), e.getIdentityKey());
-      database.markAsSentFailed(record.getId());
-      database.markAsPush(record.getId());
+      if (messageId >= 0) {
+        database.addMismatchedIdentity(record.getId(), Address.fromSerialized(e.getE164Number()), e.getIdentityKey());
+        database.markAsSentFailed(record.getId());
+        database.markAsPush(record.getId());
+      }
     }
   }
 
   @Override
-  public boolean onShouldRetry(Exception exception) {
-    if (exception instanceof RetryLaterException) return true;
+  public boolean onShouldRetry(@NonNull Exception exception) {
+    // Loki - Disable since we have our own retrying
+    // if (exception instanceof RetryLaterException) return true;
 
     return false;
   }
 
   @Override
   public void onCanceled() {
-    DatabaseFactory.getSmsDatabase(context).markAsSentFailed(messageId);
+    if (messageId >= 0) {
+      DatabaseFactory.getSmsDatabase(context).markAsSentFailed(messageId);
 
-    long      threadId  = DatabaseFactory.getSmsDatabase(context).getThreadIdForMessage(messageId);
-    Recipient recipient = DatabaseFactory.getThreadDatabase(context).getRecipientForThreadId(threadId);
+      long threadId = DatabaseFactory.getSmsDatabase(context).getThreadIdForMessage(messageId);
+      Recipient recipient = DatabaseFactory.getThreadDatabase(context).getRecipientForThreadId(threadId);
 
-    if (threadId != -1 && recipient != null) {
-      MessageNotifier.notifyMessageDeliveryFailed(context, recipient, threadId);
+      if (threadId != -1 && recipient != null) {
+        MessageNotifier.notifyMessageDeliveryFailed(context, recipient, threadId);
+      }
     }
   }
 
@@ -157,28 +200,29 @@ public class PushTextSendJob extends PushSendJob implements InjectableType {
   {
     try {
       // rotateSenderCertificateIfNecessary();
-
-      SignalServiceAddress             address            = getPushAddress(message.getIndividualRecipient().getAddress());
-      Optional<byte[]>                 profileKey         = getProfileKey(message.getIndividualRecipient());
-      Optional<UnidentifiedAccessPair> unidentifiedAccess = UnidentifiedAccessUtil.getAccessFor(context, message.getIndividualRecipient());
+      Recipient                        recipient          = Recipient.from(context, destination, false);
+      SignalServiceAddress             address            = getPushAddress(recipient.getAddress());
+      Optional<byte[]>                 profileKey         = getProfileKey(recipient);
+      Optional<UnidentifiedAccessPair> unidentifiedAccess = UnidentifiedAccessUtil.getAccessFor(context, recipient);
 
       log(TAG, "Have access key to use: " + unidentifiedAccess.isPresent());
 
       // Loki - Include a pre key bundle if the message is a friend request or an end session message
       PreKeyBundle preKeyBundle;
-      if (message.isFriendRequest() || message.isEndSession()) {
+      if (isFriendRequest || message.isEndSession()) {
         preKeyBundle = DatabaseFactory.getLokiPreKeyBundleDatabase(context).generatePreKeyBundle(address.getNumber());
       } else {
         preKeyBundle = null;
       }
 
+      String body = (isFriendRequest && customFriendRequestMessage != null) ? customFriendRequestMessage : message.getBody();
       SignalServiceDataMessage textSecureMessage = SignalServiceDataMessage.newBuilder()
                                                                            .withTimestamp(message.getDateSent())
-                                                                           .withBody(message.getBody())
+                                                                           .withBody(body)
                                                                            .withExpiration((int)(message.getExpiresIn() / 1000))
                                                                            .withProfileKey(profileKey.orNull())
                                                                            .asEndSessionMessage(message.isEndSession())
-                                                                           .asFriendRequest(message.isFriendRequest())
+                                                                           .asFriendRequest(isFriendRequest)
                                                                            .withPreKeyBundle(preKeyBundle)
                                                                            .build();
 
@@ -186,10 +230,18 @@ public class PushTextSendJob extends PushSendJob implements InjectableType {
         Optional<UnidentifiedAccessPair> syncAccess  = UnidentifiedAccessUtil.getAccessForSync(context);
         SignalServiceSyncMessage         syncMessage = buildSelfSendSyncMessage(context, textSecureMessage, syncAccess);
 
-        messageSender.sendMessage(messageId, syncMessage, syncAccess);
+        messageSender.sendMessage(templateMessageId, syncMessage, syncAccess);
         return syncAccess.isPresent();
       } else {
-        return messageSender.sendMessage(messageId, address, unidentifiedAccess, textSecureMessage).getSuccess().isUnidentified();
+        LokiSyncMessage syncMessage = null;
+        if (shouldSendSyncMessage) {
+          // Set the sync message destination to the master device, this way it will show that we sent a message to the master device and not the slave device
+          String masterDevice = PromiseUtil.get(LokiDeviceLinkUtilities.INSTANCE.getMasterHexEncodedPublicKey(address.getNumber()), null);
+          SignalServiceAddress masterAddress = masterDevice == null ? address : new SignalServiceAddress(masterDevice);
+          // We also need to use the original message ID and not -1
+          syncMessage = new LokiSyncMessage(masterAddress, templateMessageId);
+        }
+        return messageSender.sendMessage(messageId, address, unidentifiedAccess, textSecureMessage, Optional.fromNullable(syncMessage)).getSuccess().isUnidentified();
       }
     } catch (UnregisteredUserException e) {
       warn(TAG, "Failure", e);
@@ -203,7 +255,13 @@ public class PushTextSendJob extends PushSendJob implements InjectableType {
   public static class Factory implements Job.Factory<PushTextSendJob> {
     @Override
     public @NonNull PushTextSendJob create(@NonNull Parameters parameters, @NonNull Data data) {
-      return new PushTextSendJob(parameters, data.getLong(KEY_MESSAGE_ID));
+      long templateMessageID = data.getLong(KEY_TEMPLATE_MESSAGE_ID);
+      long messageID = data.getLong(KEY_MESSAGE_ID);
+      Address destination = Address.fromSerialized(data.getString(KEY_DESTINATION));
+      boolean isFriendRequest = data.getBoolean(KEY_IS_FRIEND_REQUEST);
+      String frMessage = data.hasString(KEY_CUSTOM_FR_MESSAGE) ? data.getString(KEY_CUSTOM_FR_MESSAGE) : null;
+      boolean shouldSendSyncMessage = data.getBoolean(KEY_SHOULD_SEND_SYNC_MESSAGE);
+      return new PushTextSendJob(parameters, templateMessageID, messageID, destination, isFriendRequest, frMessage, shouldSendSyncMessage);
     }
   }
 }

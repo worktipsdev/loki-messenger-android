@@ -37,6 +37,7 @@ import android.support.v4.content.ContextCompat;
 import android.support.v4.graphics.drawable.DrawableCompat;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.preference.Preference;
+import android.util.Log;
 import android.widget.Toast;
 
 import org.thoughtcrime.securesms.crypto.IdentityKeyUtil;
@@ -78,6 +79,8 @@ public class ApplicationPreferencesActivity extends PassphraseRequiredActionBarA
   // private static final String PREFERENCE_CATEGORY_DEVICES        = "preference_category_devices";
   // private static final String PREFERENCE_CATEGORY_ADVANCED       = "preference_category_advanced";
   private static final String PREFERENCE_CATEGORY_PUBLIC_KEY     = "preference_category_public_key";
+  private static final String PREFERENCE_CATEGORY_QR_CODE        = "preference_category_qr_code";
+  private static final String PREFERENCE_CATEGORY_LINKED_DEVICES = "preference_category_linked_devices";
   private static final String PREFERENCE_CATEGORY_SEED           = "preference_category_seed";
 
   private final DynamicTheme    dynamicTheme    = new DynamicTheme();
@@ -149,8 +152,11 @@ public class ApplicationPreferencesActivity extends PassphraseRequiredActionBarA
     public void onCreate(Bundle icicle) {
       super.onCreate(icicle);
 
-      this.findPreference(PREFERENCE_CATEGORY_PROFILE)
-          .setOnPreferenceClickListener(new ProfileClickListener());
+      String masterHexEncodedPublicKey = TextSecurePreferences.getMasterHexEncodedPublicKey(getContext());
+      boolean isMasterDevice = (masterHexEncodedPublicKey == null);
+
+      Preference profilePreference = this.findPreference(PREFERENCE_CATEGORY_PROFILE);
+      if (isMasterDevice) { profilePreference.setOnPreferenceClickListener(new ProfileClickListener()); }
       /*
       this.findPreference(PREFERENCE_CATEGORY_SMS_MMS)
         .setOnPreferenceClickListener(new CategoryClickListener(PREFERENCE_CATEGORY_SMS_MMS));
@@ -173,8 +179,17 @@ public class ApplicationPreferencesActivity extends PassphraseRequiredActionBarA
        */
       this.findPreference(PREFERENCE_CATEGORY_PUBLIC_KEY)
         .setOnPreferenceClickListener(new CategoryClickListener(PREFERENCE_CATEGORY_PUBLIC_KEY));
-      this.findPreference(PREFERENCE_CATEGORY_SEED)
-        .setOnPreferenceClickListener(new CategoryClickListener((PREFERENCE_CATEGORY_SEED)));
+      this.findPreference(PREFERENCE_CATEGORY_QR_CODE)
+        .setOnPreferenceClickListener(new CategoryClickListener(PREFERENCE_CATEGORY_QR_CODE));
+
+      Preference linkDevicesPreference = this.findPreference(PREFERENCE_CATEGORY_LINKED_DEVICES);
+      linkDevicesPreference.setVisible(isMasterDevice);
+      linkDevicesPreference.setOnPreferenceClickListener(new CategoryClickListener(PREFERENCE_CATEGORY_LINKED_DEVICES));
+
+      Preference seedPreference = this.findPreference(PREFERENCE_CATEGORY_SEED);
+      // Hide if this is a slave device
+      seedPreference.setVisible(isMasterDevice);
+      seedPreference.setOnPreferenceClickListener(new CategoryClickListener((PREFERENCE_CATEGORY_SEED)));
 
       if (VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
         tintIcons(getActivity());
@@ -233,7 +248,9 @@ public class ApplicationPreferencesActivity extends PassphraseRequiredActionBarA
       Drawable devices       = DrawableCompat.wrap(ContextCompat.getDrawable(context, R.drawable.ic_laptop_white_24dp));
       Drawable advanced      = DrawableCompat.wrap(ContextCompat.getDrawable(context, R.drawable.ic_advanced_white_24dp));
       Drawable publicKey     = DrawableCompat.wrap(ContextCompat.getDrawable(context, R.drawable.ic_textsms_24dp));
-      Drawable seed          = DrawableCompat.wrap(ContextCompat.getDrawable(context, R.drawable.ic_security_24dp));
+      Drawable qrCode        = DrawableCompat.wrap(ContextCompat.getDrawable(context, R.drawable.icon_qr_code));
+      Drawable linkDevice    = DrawableCompat.wrap(ContextCompat.getDrawable(context, R.drawable.icon_link));
+      Drawable seed          = DrawableCompat.wrap(ContextCompat.getDrawable(context, R.drawable.icon_seedling));
 
       int[]      tintAttr   = new int[]{R.attr.pref_icon_tint};
       TypedArray typedArray = context.obtainStyledAttributes(tintAttr);
@@ -248,6 +265,8 @@ public class ApplicationPreferencesActivity extends PassphraseRequiredActionBarA
       DrawableCompat.setTint(devices, color);
       DrawableCompat.setTint(advanced, color);
       DrawableCompat.setTint(publicKey, color);
+      DrawableCompat.setTint(qrCode, color);
+      DrawableCompat.setTint(linkDevice, color);
       DrawableCompat.setTint(seed, color);
 
       // this.findPreference(PREFERENCE_CATEGORY_SMS_MMS).setIcon(sms);
@@ -258,6 +277,8 @@ public class ApplicationPreferencesActivity extends PassphraseRequiredActionBarA
       // this.findPreference(PREFERENCE_CATEGORY_DEVICES).setIcon(devices);
       // this.findPreference(PREFERENCE_CATEGORY_ADVANCED).setIcon(advanced);
       this.findPreference(PREFERENCE_CATEGORY_PUBLIC_KEY).setIcon(publicKey);
+      this.findPreference(PREFERENCE_CATEGORY_QR_CODE).setIcon(qrCode);
+      this.findPreference(PREFERENCE_CATEGORY_LINKED_DEVICES).setIcon(linkDevice);
       this.findPreference(PREFERENCE_CATEGORY_SEED).setIcon(seed);
     }
 
@@ -302,28 +323,40 @@ public class ApplicationPreferencesActivity extends PassphraseRequiredActionBarA
           break;
          */
         case PREFERENCE_CATEGORY_PUBLIC_KEY:
-          String hexEncodedPublicKey = TextSecurePreferences.getLocalNumber(getContext());
+          String hexEncodedPublicKey = TextSecurePreferences.getMasterHexEncodedPublicKey(getContext());
+          if (hexEncodedPublicKey == null) {
+            hexEncodedPublicKey = TextSecurePreferences.getLocalNumber(getContext());
+          }
           Intent shareIntent = new Intent();
           shareIntent.setAction(Intent.ACTION_SEND);
           shareIntent.putExtra(Intent.EXTRA_TEXT, hexEncodedPublicKey);
           shareIntent.setType("text/plain");
           startActivity(shareIntent);
           break;
+        case PREFERENCE_CATEGORY_QR_CODE: break;
+        case PREFERENCE_CATEGORY_LINKED_DEVICES: break;
         case PREFERENCE_CATEGORY_SEED:
           File languageFileDirectory = new File(getContext().getApplicationInfo().dataDir);
-          String hexEncodedPrivateKey = SerializationKt.getHexEncodedPrivateKey(IdentityKeyUtil.getIdentityKeyPair(getContext()));
-          String seed = new MnemonicCodec(languageFileDirectory).encode(hexEncodedPrivateKey, MnemonicCodec.Language.Configuration.Companion.getEnglish());
-          new AlertDialog.Builder(getContext())
-                  .setTitle(R.string.activity_settings_seed_dialog_title)
-                  .setMessage(seed)
-                  .setPositiveButton(R.string.activity_settings_seed_dialog_copy_button_title, (DialogInterface.OnClickListener) (dialog, which) -> {
-                    ClipboardManager clipboard = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
-                    ClipData clip = ClipData.newPlainText("seed", seed);
-                    clipboard.setPrimaryClip(clip);
-                    Toast.makeText(getContext(), R.string.activity_settings_seed_copied_message, Toast.LENGTH_SHORT).show();
-                  })
-                  .setNeutralButton(R.string.activity_settings_seed_dialog_ok_button_title, null)
-                  .show();
+          try {
+            String hexEncodedSeed = IdentityKeyUtil.retrieve(getContext(), IdentityKeyUtil.lokiSeedKey);
+            if (hexEncodedSeed == null) {
+              hexEncodedSeed = SerializationKt.getHexEncodedPrivateKey(IdentityKeyUtil.getIdentityKeyPair(getContext())); // Legacy account
+            }
+            String seed = new MnemonicCodec(languageFileDirectory).encode(hexEncodedSeed, MnemonicCodec.Language.Configuration.Companion.getEnglish());
+            new AlertDialog.Builder(getContext())
+                    .setTitle(R.string.activity_settings_seed_dialog_title)
+                    .setMessage(seed)
+                    .setPositiveButton(R.string.activity_settings_seed_dialog_copy_button_title, (DialogInterface.OnClickListener) (dialog, which) -> {
+                      ClipboardManager clipboard = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+                      ClipData clip = ClipData.newPlainText("seed", seed);
+                      clipboard.setPrimaryClip(clip);
+                      Toast.makeText(getContext(), R.string.activity_settings_seed_copied_message, Toast.LENGTH_SHORT).show();
+                    })
+                    .setNeutralButton(R.string.activity_settings_seed_dialog_ok_button_title, null)
+                    .show();
+          } catch (Exception e) {
+            Log.d("Loki", e.getMessage());
+          }
           break;
         default:
           throw new AssertionError();

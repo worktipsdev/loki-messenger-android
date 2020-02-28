@@ -311,6 +311,7 @@ public class MessageNotifier {
     builder.setDeleteIntent(notificationState.getDeleteIntent(context));
     builder.setOnlyAlertOnce(!signal);
     builder.setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_SUMMARY);
+    builder.setAutoCancel(true);
 
     long timestamp = notifications.get(0).getTimestamp();
     if (timestamp != 0) builder.setWhen(timestamp);
@@ -358,11 +359,12 @@ public class MessageNotifier {
     List<NotificationItem>               notifications = notificationState.getNotifications();
 
     builder.setMessageCount(notificationState.getMessageCount(), notificationState.getThreadCount());
-    builder.setMostRecentSender(notifications.get(0).getIndividualRecipient());
+    builder.setMostRecentSender(notifications.get(0).getIndividualRecipient(), notifications.get(0).getRecipient());
     builder.setGroup(NOTIFICATION_GROUP);
     builder.setDeleteIntent(notificationState.getDeleteIntent(context));
     builder.setOnlyAlertOnce(!signal);
     builder.setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_SUMMARY);
+    builder.setAutoCancel(true);
 
     long timestamp = notifications.get(0).getTimestamp();
     if (timestamp != 0) builder.setWhen(timestamp);
@@ -373,7 +375,7 @@ public class MessageNotifier {
 
     while(iterator.hasPrevious()) {
       NotificationItem item = iterator.previous();
-      builder.addMessageBody(item.getIndividualRecipient(), item.getText());
+      builder.addMessageBody(item.getIndividualRecipient(), item.getRecipient(), item.getText());
     }
 
     if (signal) {
@@ -455,6 +457,9 @@ public class MessageNotifier {
       } else if (record.isMms() && !((MmsMessageRecord) record).getSharedContacts().isEmpty()) {
         Contact contact = ((MmsMessageRecord) record).getSharedContacts().get(0);
         body = ContactUtil.getStringSummary(context, contact);
+      } else if (record.isMms() && ((MmsMessageRecord) record).getSlideDeck().getStickerSlide() != null) {
+        body = SpanUtil.italic(context.getString(R.string.MessageNotifier_sticker));
+        slideDeck = ((MmsMessageRecord) record).getSlideDeck();
       } else if (record.isMms() && TextUtils.isEmpty(body) && !((MmsMessageRecord) record).getSlideDeck().getSlides().isEmpty()) {
         body = SpanUtil.italic(context.getString(R.string.MessageNotifier_media_message));
         slideDeck = ((MediaMmsMessageRecord)record).getSlideDeck();

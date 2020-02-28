@@ -32,14 +32,16 @@ public class TransportOptions {
   private final Context                          context;
   private final List<TransportOption>            enabledTransports;
 
-  private Type                      defaultTransportType  = Type.SMS;
+  private Type                      defaultTransportType  = Type.TEXTSECURE;
   private Optional<Integer>         defaultSubscriptionId = Optional.absent();
   private Optional<TransportOption> selectedOption        = Optional.absent();
 
+  private final Optional<Integer> systemSubscriptionId;
+
   public TransportOptions(Context context, boolean media) {
-    this.context               = context;
-    this.enabledTransports     = initializeAvailableTransports(media);
-    this.defaultSubscriptionId = new SubscriptionManagerCompat(context).getPreferredSubscriptionId();
+    this.context              = context;
+    this.enabledTransports    = initializeAvailableTransports(media);
+    this.systemSubscriptionId = new SubscriptionManagerCompat(context).getPreferredSubscriptionId();
   }
 
   public void reset(boolean media) {
@@ -51,7 +53,7 @@ public class TransportOptions {
     if (selectedOption.isPresent() && !isEnabled(selectedOption.get())) {
       setSelectedTransport(null);
     } else {
-      this.defaultTransportType = Type.SMS;
+      this.defaultTransportType = Type.TEXTSECURE;
       this.defaultSubscriptionId = Optional.absent();
 
       notifyTransportChangeListeners();
@@ -90,13 +92,10 @@ public class TransportOptions {
   public @NonNull TransportOption getSelectedTransport() {
     if (selectedOption.isPresent()) return selectedOption.get();
 
-    if (defaultSubscriptionId.isPresent()) {
-      for (TransportOption transportOption : enabledTransports) {
-        if (transportOption.getType() == defaultTransportType &&
-            (int)defaultSubscriptionId.get() == transportOption.getSimSubscriptionId().or(-1))
-        {
-          return transportOption;
-        }
+    if (defaultTransportType == Type.SMS) {
+      TransportOption transportOption = findEnabledSmsTransportOption(defaultSubscriptionId.or(systemSubscriptionId));
+      if (transportOption != null) {
+        return transportOption;
       }
     }
 
@@ -107,6 +106,20 @@ public class TransportOptions {
     }
 
     throw new AssertionError("No options of default type!");
+  }
+
+  private @Nullable TransportOption findEnabledSmsTransportOption(Optional<Integer> subscriptionId) {
+    if (subscriptionId.isPresent()) {
+      final int subId = subscriptionId.get();
+
+      for (TransportOption transportOption : enabledTransports) {
+        if (transportOption.getType() == Type.SMS &&
+            subId == transportOption.getSimSubscriptionId().or(-1)) {
+          return transportOption;
+        }
+      }
+    }
+    return null;
   }
 
   public void disableTransport(Type type) {
@@ -135,16 +148,6 @@ public class TransportOptions {
 
   private List<TransportOption> initializeAvailableTransports(boolean isMediaMessage) {
     List<TransportOption> results = new LinkedList<>();
-
-    if (isMediaMessage) {
-      results.addAll(getTransportOptionsForSimCards(context.getString(R.string.ConversationActivity_transport_insecure_mms),
-                                                    context.getString(R.string.conversation_activity__type_message_mms_insecure),
-                                                    new MmsCharacterCalculator()));
-    } else {
-      results.addAll(getTransportOptionsForSimCards(context.getString(R.string.ConversationActivity_transport_insecure_sms),
-                                                    context.getString(R.string.conversation_activity__type_message_sms_insecure),
-                                                    new SmsCharacterCalculator()));
-    }
 
     results.add(new TransportOption(Type.TEXTSECURE, R.drawable.ic_send_push_white_24dp,
                                     context.getResources().getColor(R.color.textsecure_primary),

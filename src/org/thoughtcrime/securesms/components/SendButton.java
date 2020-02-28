@@ -2,9 +2,9 @@ package org.thoughtcrime.securesms.components;
 
 import android.content.Context;
 import android.support.annotation.NonNull;
+import android.support.v7.widget.AppCompatImageButton;
 import android.util.AttributeSet;
 import android.view.View;
-import android.widget.ImageButton;
 
 import org.thoughtcrime.securesms.TransportOption;
 import org.thoughtcrime.securesms.TransportOptions;
@@ -13,7 +13,7 @@ import org.thoughtcrime.securesms.TransportOptionsPopup;
 import org.thoughtcrime.securesms.util.ViewUtil;
 import org.whispersystems.libsignal.util.guava.Optional;
 
-public class SendButton extends ImageButton
+public class SendButton extends AppCompatImageButton
     implements TransportOptions.OnTransportChangedListener,
                TransportOptionsPopup.SelectedListener,
                View.OnLongClickListener
@@ -108,10 +108,10 @@ public class SendButton extends ImageButton
 
   @Override
   public boolean onLongClick(View v) {
-    if (isEnabled() && transportOptions.getEnabledTransports().size() > 1) {
-      getTransportOptionsPopup().display(transportOptions.getEnabledTransports());
-      return true;
-    }
+//    if (isEnabled() && transportOptions.getEnabledTransports().size() > 1) {
+//      getTransportOptionsPopup().display(transportOptions.getEnabledTransports());
+//      return true;
+//    }
 
     return false;
   }

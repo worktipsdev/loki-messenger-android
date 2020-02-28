@@ -97,15 +97,20 @@ public class PushGroupUpdateJob extends BaseJob implements InjectableType {
     }
 
     List<String> members = new LinkedList<>();
-
     for (Address member : record.get().getMembers()) {
       members.add(member.serialize());
     }
 
+    List<String> admins = new LinkedList<>();
+    for (Address admin : record.get().getAdmins()) {
+      admins.add(admin.serialize());
+    }
+
     SignalServiceGroup groupContext = SignalServiceGroup.newBuilder(Type.UPDATE)
                                                         .withAvatar(avatar)
-                                                        .withId(groupId)
+                                                        .withId(groupId, SignalServiceGroup.GroupType.SIGNAL)
                                                         .withMembers(members)
+                                                        .withAdmins(admins)
                                                         .withName(record.get().getTitle())
                                                         .build();
 
@@ -125,7 +130,7 @@ public class PushGroupUpdateJob extends BaseJob implements InjectableType {
   }
 
   @Override
-  public boolean onShouldRetry(Exception e) {
+  public boolean onShouldRetry(@NonNull Exception e) {
     Log.w(TAG, e);
     return e instanceof PushNetworkException;
   }

@@ -47,6 +47,8 @@ import org.whispersystems.libsignal.util.guava.Optional;
 
 import java.io.IOException;
 import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -193,6 +195,23 @@ public class SmsDatabase extends MessagingDatabase {
     return -1;
   }
 
+  public Set<Long> getAllMessageIDs(long threadID) {
+    SQLiteDatabase database = databaseHelper.getReadableDatabase();
+    Cursor cursor = null;
+    Set<Long> messageIDs = new HashSet<>();
+    try {
+      cursor = database.query(TABLE_NAME, null, THREAD_ID + " = ?", new String[] { threadID + "" }, null, null, null);
+      while (cursor != null && cursor.moveToNext()) {
+        messageIDs.add(cursor.getLong(0));
+      }
+    } finally {
+      if (cursor != null) {
+        cursor.close();
+      }
+    }
+    return messageIDs;
+  }
+
   public void markAsEndSession(long id) {
     updateTypeBitmask(id, Types.KEY_EXCHANGE_MASK, Types.END_SESSION_BIT);
   }
@@ -231,6 +250,10 @@ public class SmsDatabase extends MessagingDatabase {
 
   public void markAsNoSession(long id) {
     updateTypeBitmask(id, Types.ENCRYPTION_MASK, Types.ENCRYPTION_REMOTE_NO_SESSION_BIT);
+  }
+
+  public void markAsLokiSessionRestoreSent(long id) {
+    updateTypeBitmask(id, Types.ENCRYPTION_MASK, Types.ENCRYPTION_LOKI_SESSION_RESTORE_SENT_BIT);
   }
 
   public void markAsLegacyVersion(long id) {
@@ -310,6 +333,28 @@ public class SmsDatabase extends MessagingDatabase {
     contentValues.put(NOTIFIED, 1);
 
     database.update(TABLE_NAME, contentValues, ID_WHERE, new String[] {String.valueOf(id)});
+  }
+
+  public boolean isOutgoingMessage(long timestamp) {
+    SQLiteDatabase database     = databaseHelper.getWritableDatabase();
+    Cursor         cursor       = null;
+    boolean        isOutgoing   = false;
+
+    try {
+      cursor = database.query(TABLE_NAME, new String[] { ID, THREAD_ID, ADDRESS, TYPE },
+              DATE_SENT + " = ?", new String[] { String.valueOf(timestamp) },
+              null, null, null, null);
+
+      while (cursor.moveToNext()) {
+        if (Types.isOutgoingMessageType(cursor.getLong(cursor.getColumnIndexOrThrow(TYPE)))) {
+            isOutgoing = true;
+        }
+      }
+    } finally {
+      if (cursor != null) cursor.close();
+    }
+
+    return isOutgoing;
   }
 
   public void incrementReceiptCount(SyncMessageId messageId, boolean deliveryReceipt, boolean readReceipt) {
@@ -577,7 +622,7 @@ public class SmsDatabase extends MessagingDatabase {
     ContentValues values = new ContentValues(6);
     values.put(ADDRESS, message.getSender().serialize());
     values.put(ADDRESS_DEVICE_ID,  message.getSenderDeviceId());
-    values.put(DATE_RECEIVED, System.currentTimeMillis());
+    values.put(DATE_RECEIVED, message.getSentTimestampMillis()); // Loki - This is important due to how we handle GIFs
     values.put(DATE_SENT, message.getSentTimestampMillis());
     values.put(PROTOCOL, message.getProtocol());
     values.put(READ, unread ? 0 : 1);
@@ -891,7 +936,7 @@ public class SmsDatabase extends MessagingDatabase {
       Recipient                 recipient  = Recipient.from(context, address, true);
 
       // Loki - Check to see if this message was a friend request
-      boolean isFriendRequest = DatabaseFactory.getLokiMessageFriendRequestDatabase(context).isFriendRequest(messageId);
+      boolean isFriendRequest = DatabaseFactory.getLokiMessageDatabase(context).isFriendRequest(messageId);
 
       return new SmsMessageRecord(messageId, body, recipient,
                                   recipient,

@@ -65,10 +65,10 @@ public class PassphraseCreateActivity extends PassphraseActivity {
                                                                 passphrase);
 
       MasterSecretUtil.generateAsymmetricMasterSecret(PassphraseCreateActivity.this, masterSecret);
-      IdentityKeyUtil.generateIdentityKeys(PassphraseCreateActivity.this);
+      IdentityKeyUtil.generateIdentityKeyPair(PassphraseCreateActivity.this);
       VersionTracker.updateLastSeenVersion(PassphraseCreateActivity.this);
 
-      TextSecurePreferences.setLastExperienceVersionCode(PassphraseCreateActivity.this, Util.getCurrentApkReleaseVersion(PassphraseCreateActivity.this));
+      TextSecurePreferences.setLastExperienceVersionCode(PassphraseCreateActivity.this, Util.getCanonicalVersionCode());
       TextSecurePreferences.setPasswordDisabled(PassphraseCreateActivity.this, true);
       TextSecurePreferences.setReadReceiptsEnabled(PassphraseCreateActivity.this, true);
       TextSecurePreferences.setTypingIndicatorsEnabled(PassphraseCreateActivity.this, true);

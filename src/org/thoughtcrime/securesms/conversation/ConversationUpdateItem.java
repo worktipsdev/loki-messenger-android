@@ -14,7 +14,6 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import org.thoughtcrime.securesms.BindableConversationItem;
-import network.loki.messenger.R;
 import org.thoughtcrime.securesms.VerifyIdentityActivity;
 import org.thoughtcrime.securesms.crypto.IdentityKeyParcelable;
 import org.thoughtcrime.securesms.database.IdentityDatabase;
@@ -35,6 +34,8 @@ import org.whispersystems.libsignal.util.guava.Optional;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+
+import network.loki.messenger.R;
 
 public class ConversationUpdateItem extends LinearLayout
     implements RecipientModifiedListener, BindableConversationItem
@@ -112,6 +113,7 @@ public class ConversationUpdateItem extends LinearLayout
     else if (messageRecord.isIdentityUpdate())        setIdentityRecord(messageRecord);
     else if (messageRecord.isIdentityVerified() ||
              messageRecord.isIdentityDefault())       setIdentityVerifyUpdate(messageRecord);
+    else if (messageRecord.isLokiSessionRestoreSent()) setTextMessageRecord(messageRecord);
     else                                              throw new AssertionError("Neither group nor log nor joined.");
 
     if (batchSelected.contains(messageRecord)) setSelected(true);
@@ -134,10 +136,10 @@ public class ConversationUpdateItem extends LinearLayout
   private void setTimerRecord(final MessageRecord messageRecord) {
     if (messageRecord.getExpiresIn() > 0) {
       icon.setImageResource(R.drawable.ic_timer);
-      icon.setColorFilter(new PorterDuffColorFilter(Color.parseColor("#757575"), PorterDuff.Mode.MULTIPLY));
+      icon.setColorFilter(new PorterDuffColorFilter(Color.WHITE, PorterDuff.Mode.MULTIPLY));
     } else {
       icon.setImageResource(R.drawable.ic_timer_disabled);
-      icon.setColorFilter(new PorterDuffColorFilter(Color.parseColor("#757575"), PorterDuff.Mode.MULTIPLY));
+      icon.setColorFilter(new PorterDuffColorFilter(Color.WHITE, PorterDuff.Mode.MULTIPLY));
     }
 
     title.setText(ExpirationUtil.getExpirationDisplayValue(getContext(), (int)(messageRecord.getExpiresIn() / 1000)));
@@ -197,6 +199,15 @@ public class ConversationUpdateItem extends LinearLayout
     icon.setColorFilter(new PorterDuffColorFilter(Color.parseColor("#757575"), PorterDuff.Mode.MULTIPLY));
     body.setText(messageRecord.getDisplayBody(getContext()));
 
+    title.setVisibility(GONE);
+    body.setVisibility(VISIBLE);
+    date.setVisibility(GONE);
+  }
+
+  private  void setTextMessageRecord(MessageRecord messageRecord) {
+    body.setText(messageRecord.getDisplayBody(getContext()));
+
+    icon.setVisibility(GONE);
     title.setVisibility(GONE);
     body.setVisibility(VISIBLE);
     date.setVisibility(GONE);

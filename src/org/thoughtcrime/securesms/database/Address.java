@@ -54,7 +54,7 @@ public class Address implements Parcelable, Comparable<Address> {
 
   private Address(@NonNull String address) {
     if (address == null) throw new AssertionError(address);
-    this.address = address;
+    this.address = address.toLowerCase();
   }
 
   public Address(Parcel in) {
@@ -109,13 +109,15 @@ public class Address implements Parcelable, Comparable<Address> {
     }
   }
 
-  public boolean isGroup() {
-    return GroupUtil.isEncodedGroup(address);
-  }
+  public boolean isGroup() { return GroupUtil.isEncodedGroup(address); }
 
-  public boolean isMmsGroup() {
-    return GroupUtil.isMmsGroup(address);
-  }
+  public boolean isSignalGroup() { return !isPublicChat() && !isRSSFeed(); }
+
+  public boolean isPublicChat() { return GroupUtil.isPublicChat(address); }
+
+  public boolean isRSSFeed() { return GroupUtil.isRssFeed(address); }
+
+  public boolean isMmsGroup() { return GroupUtil.isMmsGroup(address); }
 
   public boolean isEmail() {
     return NumberUtil.isValidEmail(address);
@@ -126,22 +128,26 @@ public class Address implements Parcelable, Comparable<Address> {
   }
 
   public @NonNull String toGroupString() {
-    if (!isGroup()) throw new AssertionError("Not group: " + address);
+    if (!isGroup()) throw new AssertionError("Not group");
     return address;
   }
 
   public @NonNull String toPhoneString() {
-    if (!isPhone()) throw new AssertionError("Not e164: " + address);
+    if (!isPhone() && !isPublicChat()) {
+      if (isEmail()) throw new AssertionError("Not e164, is email");
+      if (isGroup()) throw new AssertionError("Not e164, is group");
+      throw new AssertionError("Not e164, unknown");
+    }
     return address;
   }
 
   public @NonNull String toEmailString() {
-    if (!isEmail()) throw new AssertionError("Not email: " + address);
+    if (!isEmail()) throw new AssertionError("Not email");
     return address;
   }
 
   @Override
-  public String toString() {
+  public @NonNull String toString() {
     return address;
   }
 

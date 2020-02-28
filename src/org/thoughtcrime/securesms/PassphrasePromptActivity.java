@@ -43,6 +43,7 @@ import android.view.animation.Animation;
 import android.view.animation.BounceInterpolator;
 import android.view.animation.TranslateAnimation;
 import android.view.inputmethod.EditorInfo;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -72,9 +73,9 @@ public class PassphrasePromptActivity extends PassphraseActivity {
   private DynamicIntroTheme dynamicTheme    = new DynamicIntroTheme();
   private DynamicLanguage   dynamicLanguage = new DynamicLanguage();
 
-  private View            passphraseAuthContainer;
-  private ImageView       fingerprintPrompt;
-  private TextView        lockScreenButton;
+  private View                   passphraseAuthContainer;
+  private ImageView              fingerprintPrompt;
+  private Button                 lockScreenButton;
 
   private EditText        passphraseText;
   private ImageButton     showButton;
@@ -136,7 +137,7 @@ public class PassphrasePromptActivity extends PassphraseActivity {
     MenuInflater inflater = this.getMenuInflater();
     menu.clear();
 
-    inflater.inflate(R.menu.log_submit, menu);
+    // inflater.inflate(R.menu.log_submit, menu);
     super.onPrepareOptionsMenu(menu);
     return true;
   }
@@ -276,7 +277,7 @@ public class PassphrasePromptActivity extends PassphraseActivity {
       fingerprintManager.authenticate(null, 0, fingerprintCancellationSignal, fingerprintListener, null);
     } else if (Build.VERSION.SDK_INT >= 21){
       Log.i(TAG, "firing intent...");
-      Intent intent = keyguardManager.createConfirmDeviceCredentialIntent("Unlock Signal", "");
+      Intent intent = keyguardManager.createConfirmDeviceCredentialIntent("Unlock Session", "");
       startActivityForResult(intent, 1);
     } else {
       Log.w(TAG, "Not compatible...");

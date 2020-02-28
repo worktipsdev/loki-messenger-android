@@ -4,6 +4,13 @@ import android.app.Notification;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
+import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
@@ -21,6 +28,7 @@ import org.thoughtcrime.securesms.contacts.avatars.ContactColors;
 import org.thoughtcrime.securesms.contacts.avatars.ContactPhoto;
 import org.thoughtcrime.securesms.contacts.avatars.FallbackContactPhoto;
 import org.thoughtcrime.securesms.contacts.avatars.GeneratedContactPhoto;
+import org.thoughtcrime.securesms.database.DatabaseFactory;
 import org.thoughtcrime.securesms.logging.Log;
 import org.thoughtcrime.securesms.mms.DecryptableStreamUriLoader;
 import org.thoughtcrime.securesms.mms.GlideApp;
@@ -31,6 +39,7 @@ import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.util.BitmapUtil;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.thoughtcrime.securesms.util.Util;
+import org.whispersystems.signalservice.loki.api.LokiPublicChat;
 
 import java.util.LinkedList;
 import java.util.List;
@@ -111,7 +120,10 @@ public class SingleRecipientNotificationBuilder extends AbstractNotificationBuil
     SpannableStringBuilder stringBuilder = new SpannableStringBuilder();
 
     if (privacy.isDisplayContact() && threadRecipients.isGroupRecipient()) {
-      stringBuilder.append(Util.getBoldedString(individualRecipient.toShortString() + ": "));
+      String displayName = NotificationUtilities.getOpenGroupDisplayName(individualRecipient, threadRecipients, context);
+      if (displayName != null) {
+        stringBuilder.append(Util.getBoldedString(displayName + ": "));
+      }
     }
 
     if (privacy.isDisplayMessage()) {
@@ -206,7 +218,10 @@ public class SingleRecipientNotificationBuilder extends AbstractNotificationBuil
     SpannableStringBuilder stringBuilder = new SpannableStringBuilder();
 
     if (privacy.isDisplayContact() && threadRecipient.isGroupRecipient()) {
-      stringBuilder.append(Util.getBoldedString(individualRecipient.toShortString() + ": "));
+      String displayName = NotificationUtilities.getOpenGroupDisplayName(individualRecipient, threadRecipient, context);
+      if (displayName != null) {
+        stringBuilder.append(Util.getBoldedString(displayName + ": "));
+      }
     }
 
     if (privacy.isDisplayMessage()) {
@@ -237,9 +252,32 @@ public class SingleRecipientNotificationBuilder extends AbstractNotificationBuil
       Bitmap recipientPhotoBitmap = BitmapUtil.createFromDrawable(drawable, largeIconTargetSize, largeIconTargetSize);
 
       if (recipientPhotoBitmap != null) {
-        setLargeIcon(recipientPhotoBitmap);
+        setLargeIcon(getCircleBitmap(recipientPhotoBitmap));
       }
     }
+  }
+
+  private Bitmap getCircleBitmap(Bitmap bitmap) {
+    final Bitmap output = Bitmap.createBitmap(bitmap.getWidth(),
+            bitmap.getHeight(), Bitmap.Config.ARGB_8888);
+    final Canvas canvas = new Canvas(output);
+
+    final int color = Color.RED;
+    final Paint paint = new Paint();
+    final Rect rect = new Rect(0, 0, bitmap.getWidth(), bitmap.getHeight());
+    final RectF rectF = new RectF(rect);
+
+    paint.setAntiAlias(true);
+    canvas.drawARGB(0, 0, 0, 0);
+    paint.setColor(color);
+    canvas.drawOval(rectF, paint);
+
+    paint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_IN));
+    canvas.drawBitmap(bitmap, rect, rect, paint);
+
+    bitmap.recycle();
+
+    return output;
   }
 
   private boolean hasBigPictureSlide(@Nullable SlideDeck slideDeck) {

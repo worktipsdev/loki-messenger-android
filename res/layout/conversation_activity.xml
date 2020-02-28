@@ -1,108 +1,232 @@
 <?xml version="1.0" encoding="utf-8"?>
-
-<org.thoughtcrime.securesms.components.InputAwareLayout
+<FrameLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/layout_container"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootView"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="@drawable/default_session_background">
 
-    <LinearLayout
-        android:id="@+id/conversation_container"
+    <android.support.v7.widget.Toolbar
+        android:id="@+id/toolbar"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:clipChildren="false"
-        android:clipToPadding="false"
-        android:gravity="bottom"
-        android:orientation="vertical"
-        android:paddingTop="?attr/actionBarSize">
+        android:layout_height="?attr/actionBarSize"
+        android:minHeight="?attr/actionBarSize"
+        app:contentInsetLeft="24dp"
+        app:contentInsetRight="20dp"
+        android:background="@color/action_bar_background"
+        android:theme="@style/Session.DarkActionBar"
+        app:popupTheme="@style/Session.DarkActionBar">
 
-        <ViewStub
-            android:id="@+id/group_share_profile_view_stub"
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inflatedId="@+id/group_share_profile_view"
-            android:layout="@layout/conversation_activity_group_share_profile_stub" />
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-        <ViewStub
-            android:id="@+id/unverified_banner_stub"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inflatedId="@+id/unverified_banner"
-            android:layout="@layout/conversation_activity_unverified_banner_stub" />
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
 
-        <ViewStub
-            android:id="@+id/reminder_stub"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inflatedId="@+id/reminder"
-            android:layout="@layout/conversation_activity_reminderview_stub" />
+                <TextView
+                    android:id="@+id/titleTextView"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:text="Conversation"
+                    android:textColor="@color/text"
+                    android:textSize="@dimen/large_font_size"
+                    android:fontFamily="sans-serif-medium" />
 
-        <FrameLayout
-            android:id="@+id/fragment_content"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1" />
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
 
-        <ViewStub
-            android:id="@+id/attachment_editor_stub"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inflatedId="@+id/attachment_editor"
-            android:layout="@layout/conversation_activity_attachment_editor_stub" />
+                    <ImageView
+                        android:id="@+id/muteIndicatorImageView"
+                        android:layout_width="12dp"
+                        android:layout_height="12dp"
+                        android:src="@drawable/ic_mute"
+                        android:layout_marginRight="4dp"
+                        android:visibility="gone" />
 
-        <FrameLayout
+                    <TextView
+                        android:id="@+id/subtitleTextView"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="26 members"
+                        android:textColor="@color/text"
+                        android:textSize="@dimen/small_font_size" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1" />
+
+        </LinearLayout>
+
+    </android.support.v7.widget.Toolbar>
+
+    <org.thoughtcrime.securesms.components.InputAwareLayout
+        android:id="@+id/layout_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <LinearLayout
+            android:id="@+id/conversation_container"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="match_parent"
             android:clipChildren="false"
-            android:clipToPadding="false">
+            android:clipToPadding="false"
+            android:gravity="bottom"
+            android:orientation="vertical"
+            android:paddingTop="?attr/actionBarSize">
 
-            <include layout="@layout/conversation_input_panel" />
+            <ProgressBar
+                android:id="@+id/messageStatusProgressBar"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/accent_line_thickness"
+                android:paddingLeft="-2dp"
+                android:paddingRight="-2dp"
+                android:progressTint="@color/accent"
+                android:progressBackgroundTint="@color/transparent"
+                android:alpha="0"
+                android:indeterminate="false"
+                android:progress="80" />
 
-            <include layout="@layout/conversation_search_nav" />
+            <org.thoughtcrime.securesms.loki.redesign.views.SessionRestoreBannerView
+                android:id="@+id/sessionRestoreBannerView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
 
-        </FrameLayout>
+            <ViewStub
+                android:id="@+id/group_share_profile_view_stub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inflatedId="@+id/group_share_profile_view"
+                android:layout="@layout/conversation_activity_group_share_profile_stub" />
 
-        <Button
-            android:id="@+id/register_button"
-            android:layout_width="fill_parent"
-            android:layout_height="wrap_content"
-            android:padding="20dp"
-            android:text="@string/conversation_activity__enable_signal_messages"
-            android:visibility="gone" />
+            <ViewStub
+                android:id="@+id/unverified_banner_stub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inflatedId="@+id/unverified_banner"
+                android:layout="@layout/conversation_activity_unverified_banner_stub" />
 
-        <Button
-            android:id="@+id/unblock_button"
-            android:layout_width="fill_parent"
-            android:layout_height="wrap_content"
-            android:padding="20dp"
-            android:text="@string/ConversationActivity_unblock"
-            android:visibility="gone" />
+            <ViewStub
+                android:id="@+id/reminder_stub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inflatedId="@+id/reminder"
+                android:layout="@layout/conversation_activity_reminderview_stub" />
 
-        <Button
-            android:id="@+id/make_default_sms_button"
-            android:layout_width="fill_parent"
-            android:layout_height="wrap_content"
-            android:padding="20dp"
-            android:text="@string/conversation_activity__enable_signal_for_sms"
-            android:visibility="gone" />
+            <FrameLayout
+                android:id="@+id/fragment_content"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
 
-        <TextView
-            android:id="@+id/space_left"
-            android:layout_width="fill_parent"
-            android:layout_height="wrap_content"
-            android:background="?android:windowBackground"
-            android:paddingStart="5dip"
-            android:text="160/160 (1)"
-            android:visibility="gone" />
+            <ViewStub
+                android:id="@+id/attachment_editor_stub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inflatedId="@+id/attachment_editor"
+                android:layout="@layout/conversation_activity_attachment_editor_stub" />
 
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:clipChildren="false"
+                android:clipToPadding="false">
 
-        <ViewStub
-            android:id="@+id/emoji_drawer_stub"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:inflatedId="@+id/emoji_drawer"
-            android:layout="@layout/conversation_activity_emojidrawer_stub" />
+                <LinearLayout
+                    android:id="@+id/mentionCandidateSelectionViewContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
 
-    </LinearLayout>
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1px"
+                        android:background="@color/separator" />
 
-</org.thoughtcrime.securesms.components.InputAwareLayout>
+                    <include layout="@layout/view_mention_candidate_selection" />
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1px"
+                        android:background="@color/separator" />
+
+                </LinearLayout>
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:clipChildren="false"
+                    android:clipToPadding="false">
+
+                    <include layout="@layout/conversation_input_panel" />
+
+                    <include layout="@layout/conversation_search_nav" />
+
+                </FrameLayout>
+
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/register_button"
+                android:layout_width="fill_parent"
+                android:layout_height="wrap_content"
+                android:padding="20dp"
+                android:text="@string/conversation_activity__enable_signal_messages"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/unblock_button"
+                android:layout_width="fill_parent"
+                android:layout_height="wrap_content"
+                android:padding="20dp"
+                android:text="@string/ConversationActivity_unblock"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/make_default_sms_button"
+                android:layout_width="fill_parent"
+                android:layout_height="wrap_content"
+                android:padding="20dp"
+                android:text="@string/conversation_activity__enable_signal_for_sms"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/space_left"
+                android:layout_width="fill_parent"
+                android:layout_height="wrap_content"
+                android:background="?android:windowBackground"
+                android:paddingStart="5dip"
+                android:text="160/160 (1)"
+                android:visibility="gone" />
+
+            <ViewStub
+                android:id="@+id/emoji_drawer_stub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inflatedId="@+id/emoji_drawer"
+                android:layout="@layout/conversation_activity_emojidrawer_stub" />
+
+        </LinearLayout>
+
+    </org.thoughtcrime.securesms.components.InputAwareLayout>
+
+</FrameLayout>

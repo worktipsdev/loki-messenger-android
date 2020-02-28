@@ -9,9 +9,7 @@ import org.thoughtcrime.securesms.jobmanager.Data;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 import org.thoughtcrime.securesms.logging.Log;
-
 import org.thoughtcrime.securesms.recipients.Recipient;
-import org.thoughtcrime.securesms.util.DirectoryHelper;
 import org.whispersystems.signalservice.api.push.exceptions.PushNetworkException;
 
 import java.io.IOException;
@@ -67,15 +65,15 @@ public class DirectoryRefreshJob extends BaseJob {
   public void onRun() throws IOException {
     Log.i(TAG, "DirectoryRefreshJob.onRun()");
 
-    if (recipient == null) {
-      DirectoryHelper.refreshDirectory(context, notifyOfNewUsers);
-    } else {
-      DirectoryHelper.refreshDirectoryFor(context, recipient);
-    }
+//    if (recipient == null) {
+//      DirectoryHelper.refreshDirectory(context, notifyOfNewUsers);
+//    } else {
+//      DirectoryHelper.refreshDirectoryFor(context, recipient);
+//    }
   }
 
   @Override
-  public boolean onShouldRetry(Exception exception) {
+  public boolean onShouldRetry(@NonNull Exception exception) {
     if (exception instanceof PushNetworkException) return true;
     return false;
   }

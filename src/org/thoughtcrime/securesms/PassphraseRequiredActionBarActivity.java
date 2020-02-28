@@ -13,9 +13,10 @@ import android.support.v4.app.Fragment;
 import org.thoughtcrime.securesms.crypto.MasterSecretUtil;
 import org.thoughtcrime.securesms.jobs.PushNotificationReceiveJob;
 import org.thoughtcrime.securesms.logging.Log;
-import org.thoughtcrime.securesms.loki.AccountDetailsActivity;
+import org.thoughtcrime.securesms.loki.redesign.activities.HomeActivity;
+import org.thoughtcrime.securesms.loki.redesign.activities.LandingActivity;
+import org.thoughtcrime.securesms.loki.redesign.activities.SeedActivity;
 import org.thoughtcrime.securesms.push.SignalServiceNetworkAccess;
-import org.thoughtcrime.securesms.registration.WelcomeActivity;
 import org.thoughtcrime.securesms.service.KeyCachingService;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
 
@@ -152,9 +153,11 @@ public abstract class PassphraseRequiredActionBarActivity extends BaseActionBarA
       return STATE_WELCOME_SCREEN;
     } else if (!TextSecurePreferences.hasPromptedPushRegistration(this)) {
       return STATE_PROMPT_PUSH_REGISTRATION;
-    } else if (ExperienceUpgradeActivity.isUpdate(this)) {
-      return STATE_EXPERIENCE_UPGRADE;
-    } else {
+    }
+//    else if (ExperienceUpgradeActivity.isUpdate(this)) {
+//      return STATE_EXPERIENCE_UPGRADE;
+//    }
+    else {
       return STATE_NORMAL;
     }
   }
@@ -179,11 +182,11 @@ public abstract class PassphraseRequiredActionBarActivity extends BaseActionBarA
   }
 
   private Intent getWelcomeIntent() {
-    return getRoutedIntent(WelcomeActivity.class, getPushRegistrationIntent());
+    return getRoutedIntent(LandingActivity.class, getPushRegistrationIntent());
   }
 
   private Intent getPushRegistrationIntent() {
-    return getRoutedIntent(AccountDetailsActivity.class, getCreateProfileIntent());
+    return getRoutedIntent(SeedActivity.class, getCreateProfileIntent());
   }
 
   private Intent getCreateProfileIntent() {
@@ -197,7 +200,7 @@ public abstract class PassphraseRequiredActionBarActivity extends BaseActionBarA
   }
 
   private Intent getConversationListIntent() {
-    return new Intent(this, ConversationListActivity.class);
+    return new Intent(this, HomeActivity.class);
   }
 
   private void initializeClearKeyReceiver() {

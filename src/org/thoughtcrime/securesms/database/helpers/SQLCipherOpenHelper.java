@@ -31,18 +31,21 @@ import org.thoughtcrime.securesms.database.SearchDatabase;
 import org.thoughtcrime.securesms.database.SessionDatabase;
 import org.thoughtcrime.securesms.database.SignedPreKeyDatabase;
 import org.thoughtcrime.securesms.database.SmsDatabase;
+import org.thoughtcrime.securesms.database.StickerDatabase;
 import org.thoughtcrime.securesms.database.ThreadDatabase;
 import org.thoughtcrime.securesms.jobs.RefreshPreKeysJob;
 import org.thoughtcrime.securesms.logging.Log;
-import org.thoughtcrime.securesms.loki.LokiAPIDatabase;
-import org.thoughtcrime.securesms.loki.LokiPreKeyRecordDatabase;
-import org.thoughtcrime.securesms.loki.LokiMessageFriendRequestDatabase;
-import org.thoughtcrime.securesms.loki.LokiPreKeyBundleDatabase;
+import org.thoughtcrime.securesms.loki.LokiMessageDatabase;
 import org.thoughtcrime.securesms.loki.LokiThreadDatabase;
-import org.thoughtcrime.securesms.loki.LokiUserDisplayNameDatabase;
+import org.thoughtcrime.securesms.loki.redesign.messaging.LokiAPIDatabase;
+import org.thoughtcrime.securesms.loki.redesign.messaging.LokiPreKeyBundleDatabase;
+import org.thoughtcrime.securesms.loki.redesign.messaging.LokiPreKeyRecordDatabase;
+import org.thoughtcrime.securesms.loki.redesign.messaging.LokiUserDatabase;
 import org.thoughtcrime.securesms.notifications.NotificationChannels;
 import org.thoughtcrime.securesms.service.KeyCachingService;
+import org.thoughtcrime.securesms.util.GroupUtil;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
+import org.whispersystems.signalservice.loki.api.LokiPublicChat;
 
 import java.io.File;
 
@@ -70,8 +73,15 @@ public class SQLCipherOpenHelper extends SQLiteOpenHelper {
   private static final int SELF_ATTACHMENT_CLEANUP          = 18;
   private static final int RECIPIENT_FORCE_SMS_SELECTION    = 19;
   private static final int JOBMANAGER_STRIKES_BACK          = 20;
+  private static final int STICKERS                         = 21;
+  private static final int lokiV1                           = 22;
+  private static final int lokiV2                           = 23;
+  private static final int lokiV3                           = 24;
+  private static final int lokiV4                           = 25;
+  private static final int lokiV5                           = 26;
+  private static final int lokiV6                           = 27;
 
-  private static final int    DATABASE_VERSION = 20;
+  private static final int    DATABASE_VERSION = lokiV6; // Loki - onUpgrade(...) must be updated to use Loki version numbers if Signal makes any database changes
   private static final String DATABASE_NAME    = "signal.db";
 
   private final Context        context;
@@ -117,15 +127,25 @@ public class SQLCipherOpenHelper extends SQLiteOpenHelper {
     for (String sql : JobDatabase.CREATE_TABLE) {
       db.execSQL(sql);
     }
+    db.execSQL(StickerDatabase.CREATE_TABLE);
+
     db.execSQL(LokiAPIDatabase.getCreateSwarmCacheTableCommand());
     db.execSQL(LokiAPIDatabase.getCreateLastMessageHashValueTableCommand());
     db.execSQL(LokiAPIDatabase.getCreateReceivedMessageHashValuesTableCommand());
+    db.execSQL(LokiAPIDatabase.getCreateGroupChatAuthTokenTableCommand());
+    db.execSQL(LokiAPIDatabase.getCreateLastMessageServerIDTableCommand());
+    db.execSQL(LokiAPIDatabase.getCreateLastDeletionServerIDTableCommand());
+    db.execSQL(LokiAPIDatabase.getCreateDeviceLinkTableCommand());
+    db.execSQL(LokiAPIDatabase.getCreateUserCountTableCommand());
     db.execSQL(LokiPreKeyBundleDatabase.getCreateTableCommand());
     db.execSQL(LokiPreKeyRecordDatabase.getCreateTableCommand());
-    db.execSQL(LokiMessageFriendRequestDatabase.getCreateTableCommand());
+    db.execSQL(LokiMessageDatabase.getCreateMessageFriendRequestTableCommand());
+    db.execSQL(LokiMessageDatabase.getCreateMessageToThreadMappingTableCommand());
     db.execSQL(LokiThreadDatabase.getCreateFriendRequestTableCommand());
     db.execSQL(LokiThreadDatabase.getCreateSessionResetTableCommand());
-    db.execSQL(LokiUserDisplayNameDatabase.getCreateTableCommand());
+    db.execSQL(LokiThreadDatabase.getCreatePublicChatTableCommand());
+    db.execSQL(LokiUserDatabase.getCreateDisplayNameTableCommand());
+    db.execSQL(LokiUserDatabase.getCreateServerDisplayNameTableCommand());
 
     executeStatements(db, SmsDatabase.CREATE_INDEXS);
     executeStatements(db, MmsDatabase.CREATE_INDEXS);
@@ -134,6 +154,7 @@ public class SQLCipherOpenHelper extends SQLiteOpenHelper {
     executeStatements(db, DraftDatabase.CREATE_INDEXS);
     executeStatements(db, GroupDatabase.CREATE_INDEXS);
     executeStatements(db, GroupReceiptDatabase.CREATE_INDEXES);
+    executeStatements(db, StickerDatabase.CREATE_INDEXES);
 
     if (context.getDatabasePath(ClassicOpenHelper.NAME).exists()) {
       ClassicOpenHelper                      legacyHelper = new ClassicOpenHelper(context);
@@ -153,6 +174,15 @@ public class SQLCipherOpenHelper extends SQLiteOpenHelper {
       SessionStoreMigrationHelper.migrateSessions(context, db);
       PreKeyMigrationHelper.cleanUpPreKeys(context);
     }
+  }
+
+  @Override
+  public void onConfigure(SQLiteDatabase db) {
+    super.onConfigure(db);
+    // Loki: Enable Write Ahead Logging Mode, increase the cache size
+    // This should be disabled if we ever run into serious race condition bugs
+    db.enableWriteAheadLogging();
+    db.execSQL("PRAGMA cache_size = 10000");
   }
 
   @Override
@@ -450,6 +480,94 @@ public class SQLCipherOpenHelper extends SQLiteOpenHelper {
                                                 "job_spec_id TEXT, " +
                                                 "depends_on_job_spec_id TEXT, " +
                                                 "UNIQUE(job_spec_id, depends_on_job_spec_id))");
+      }
+
+      if (oldVersion < STICKERS) {
+        db.execSQL("CREATE TABLE sticker (_id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                                         "pack_id TEXT NOT NULL, " +
+                                         "pack_key TEXT NOT NULL, " +
+                                         "pack_title TEXT NOT NULL, " +
+                                         "pack_author TEXT NOT NULL, " +
+                                         "sticker_id INTEGER, " +
+                                         "cover INTEGER, " +
+                                         "emoji TEXT NOT NULL, " +
+                                         "last_used INTEGER, " +
+                                         "installed INTEGER," +
+                                         "file_path TEXT NOT NULL, " +
+                                         "file_length INTEGER, " +
+                                         "file_random BLOB, " +
+                                         "UNIQUE(pack_id, sticker_id, cover) ON CONFLICT IGNORE)");
+
+        db.execSQL("CREATE INDEX IF NOT EXISTS sticker_pack_id_index ON sticker (pack_id);");
+        db.execSQL("CREATE INDEX IF NOT EXISTS sticker_sticker_id_index ON sticker (sticker_id);");
+
+        db.execSQL("ALTER TABLE part ADD COLUMN sticker_pack_id TEXT");
+        db.execSQL("ALTER TABLE part ADD COLUMN sticker_pack_key TEXT");
+        db.execSQL("ALTER TABLE part ADD COLUMN sticker_id INTEGER DEFAULT -1");
+        db.execSQL("CREATE INDEX IF NOT EXISTS part_sticker_pack_id_index ON part (sticker_pack_id)");
+      }
+
+      if (oldVersion < lokiV1) {
+        db.execSQL(LokiAPIDatabase.getCreateGroupChatAuthTokenTableCommand());
+        db.execSQL(LokiAPIDatabase.getCreateLastMessageServerIDTableCommand());
+        db.execSQL(LokiAPIDatabase.getCreateLastDeletionServerIDTableCommand());
+      }
+
+      if (oldVersion < lokiV2) {
+        db.execSQL(LokiUserDatabase.getCreateServerDisplayNameTableCommand());
+      }
+
+      if (oldVersion < lokiV3) {
+        db.execSQL(LokiAPIDatabase.getCreateDeviceLinkTableCommand());
+        db.execSQL(LokiThreadDatabase.getCreatePublicChatTableCommand());
+
+        db.execSQL("ALTER TABLE groups ADD COLUMN avatar_url TEXT");
+        db.execSQL("ALTER TABLE part ADD COLUMN url TEXT");
+      }
+
+      if (oldVersion < lokiV4) {
+        db.execSQL(LokiMessageDatabase.getCreateMessageToThreadMappingTableCommand());
+      }
+
+      if (oldVersion < lokiV5) {
+        db.execSQL(LokiAPIDatabase.getCreateUserCountTableCommand());
+      }
+
+      if (oldVersion < lokiV6) {
+        // Migrate public chats from __textsecure_group__ to __loki_public_chat_group__
+        try (Cursor lokiPublicChatCursor = db.rawQuery("SELECT public_chat FROM loki_public_chat_database", null)) {
+          while (lokiPublicChatCursor != null && lokiPublicChatCursor.moveToNext()) {
+            String chatString = lokiPublicChatCursor.getString(0);
+            LokiPublicChat publicChat = LokiPublicChat.fromJSON(chatString);
+            if (publicChat != null) {
+              byte[] groupId = publicChat.getId().getBytes();
+              String oldId = GroupUtil.getEncodedId(groupId, false);
+              String newId = GroupUtil.getEncodedPublicChatId(groupId);
+              ContentValues threadUpdate = new ContentValues();
+              threadUpdate.put("recipient_ids", newId);
+              db.update("thread", threadUpdate, "recipient_ids = ?", new String[]{ oldId });
+              ContentValues groupUpdate = new ContentValues();
+              groupUpdate.put("group_id", newId);
+              db.update("groups", groupUpdate,"group_id = ?", new String[] { oldId });
+            }
+          }
+        }
+
+        // Migrate rss feeds from __textsecure_group__ to __loki_rss_feed_group__
+        String[] rssFeedIds = new String[] { "loki.network.feed", "loki.network.messenger-updates.feed" };
+        for (String groupId : rssFeedIds) {
+          String oldId = GroupUtil.getEncodedId(groupId.getBytes(), false);
+          String newId = GroupUtil.getEncodedRSSFeedId(groupId.getBytes());
+          ContentValues threadUpdate = new ContentValues();
+          threadUpdate.put("recipient_ids", newId);
+          db.update("thread", threadUpdate, "recipient_ids = ?", new String[]{ oldId });
+          ContentValues groupUpdate = new ContentValues();
+          groupUpdate.put("group_id", newId);
+          db.update("groups", groupUpdate,"group_id = ?", new String[] { oldId });
+        }
+
+        // Add admin field in groups
+        db.execSQL("ALTER TABLE groups ADD COLUMN admins TEXT");
       }
 
       db.setTransactionSuccessful();

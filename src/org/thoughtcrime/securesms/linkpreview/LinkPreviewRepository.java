@@ -8,11 +8,15 @@ import android.text.Html;
 import android.text.TextUtils;
 
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
+import com.bumptech.glide.load.resource.gif.GifDrawable;
 import com.bumptech.glide.request.FutureTarget;
 
+import com.bumptech.glide.util.ByteBufferUtil;
+import org.thoughtcrime.securesms.ApplicationContext;
 import org.thoughtcrime.securesms.attachments.Attachment;
 import org.thoughtcrime.securesms.attachments.UriAttachment;
 import org.thoughtcrime.securesms.database.AttachmentDatabase;
+import org.thoughtcrime.securesms.dependencies.InjectableType;
 import org.thoughtcrime.securesms.giph.model.ChunkedImageUrl;
 import org.thoughtcrime.securesms.logging.Log;
 import org.thoughtcrime.securesms.mms.GlideApp;
@@ -22,9 +26,17 @@ import org.thoughtcrime.securesms.net.ContentProxySafetyInterceptor;
 import org.thoughtcrime.securesms.net.ContentProxySelector;
 import org.thoughtcrime.securesms.net.RequestController;
 import org.thoughtcrime.securesms.providers.BlobProvider;
+import org.thoughtcrime.securesms.stickers.StickerRemoteUri;
+import org.thoughtcrime.securesms.stickers.StickerUrl;
+import org.thoughtcrime.securesms.util.Hex;
 import org.thoughtcrime.securesms.util.MediaUtil;
 import org.thoughtcrime.securesms.util.concurrent.SignalExecutors;
+import org.whispersystems.libsignal.InvalidMessageException;
+import org.whispersystems.libsignal.util.Pair;
 import org.whispersystems.libsignal.util.guava.Optional;
+import org.whispersystems.signalservice.api.SignalServiceMessageReceiver;
+import org.whispersystems.signalservice.api.messages.SignalServiceStickerManifest;
+import org.whispersystems.signalservice.api.messages.SignalServiceStickerManifest.StickerInfo;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -33,13 +45,15 @@ import java.util.concurrent.ExecutionException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.inject.Inject;
+
 import okhttp3.CacheControl;
 import okhttp3.Call;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
-public class LinkPreviewRepository {
+public class LinkPreviewRepository implements InjectableType {
 
   private static final String TAG = LinkPreviewRepository.class.getSimpleName();
 
@@ -47,15 +61,19 @@ public class LinkPreviewRepository {
 
   private final OkHttpClient client;
 
-  public LinkPreviewRepository() {
+  @Inject SignalServiceMessageReceiver messageReceiver;
+
+  public LinkPreviewRepository(@NonNull Context context) {
     this.client = new OkHttpClient.Builder()
                                   .proxySelector(new ContentProxySelector())
                                   .addNetworkInterceptor(new ContentProxySafetyInterceptor())
                                   .cache(null)
                                   .build();
+
+    ApplicationContext.getInstance(context).injectDependencies(this);
   }
 
-  RequestController getLinkPreview(@NonNull Context context, @NonNull String url, @NonNull Callback<Optional<LinkPreview>> callback) {
+  public RequestController getLinkPreview(@NonNull Context context, @NonNull String url, @NonNull Callback<Optional<LinkPreview>> callback) {
     CompositeRequestController compositeController = new CompositeRequestController();
 
     if (!LinkPreviewUtil.isWhitelistedLinkUrl(url)) {
@@ -64,27 +82,33 @@ public class LinkPreviewRepository {
       return compositeController;
     }
 
-    RequestController metadataController = fetchMetadata(url, metadata -> {
-      if (metadata.isEmpty()) {
-        callback.onComplete(Optional.absent());
-        return;
-      }
+    RequestController metadataController;
 
-      if (!metadata.getImageUrl().isPresent()) {
-        callback.onComplete(Optional.of(new LinkPreview(url, metadata.getTitle().get(), Optional.absent())));
-        return;
-      }
-
-      RequestController imageController = fetchThumbnail(context, metadata.getImageUrl().get(), attachment -> {
-        if (!metadata.getTitle().isPresent() && !attachment.isPresent()) {
+    if (StickerUrl.isValidShareLink(url)) {
+      metadataController = fetchStickerPackLinkPreview(context, url, callback);
+    } else {
+      metadataController = fetchMetadata(url, metadata -> {
+        if (metadata.isEmpty()) {
           callback.onComplete(Optional.absent());
-        } else {
-          callback.onComplete(Optional.of(new LinkPreview(url, metadata.getTitle().or(""), attachment)));
+          return;
         }
-      });
 
-      compositeController.addController(imageController);
-    });
+        if (!metadata.getImageUrl().isPresent()) {
+          callback.onComplete(Optional.of(new LinkPreview(url, metadata.getTitle().get(), Optional.absent())));
+          return;
+        }
+
+        RequestController imageController = fetchThumbnail(context, metadata.getImageUrl().get(), attachment -> {
+          if (!metadata.getTitle().isPresent() && !attachment.isPresent()) {
+            callback.onComplete(Optional.absent());
+          } else {
+            callback.onComplete(Optional.of(new LinkPreview(url, metadata.getTitle().or(""), attachment)));
+          }
+        });
+
+        compositeController.addController(imageController);
+      });
+    }
 
     compositeController.addController(metadataController);
     return compositeController;
@@ -95,13 +119,13 @@ public class LinkPreviewRepository {
 
     call.enqueue(new okhttp3.Callback() {
       @Override
-      public void onFailure(Call call, IOException e) {
+      public void onFailure(@NonNull Call call, @NonNull IOException e) {
         Log.w(TAG, "Request failed.", e);
         callback.onComplete(Metadata.empty());
       }
 
       @Override
-      public void onResponse(Call call, Response response) throws IOException {
+      public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
         if (!response.isSuccessful()) {
           Log.w(TAG, "Non-successful response. Code: " + response.code());
           callback.onComplete(Metadata.empty());
@@ -128,6 +152,28 @@ public class LinkPreviewRepository {
     return new CallRequestController(call);
   }
 
+  public @NonNull RequestController fetchGIF(@NonNull Context context, @NonNull String url, @NonNull Callback<Optional<Attachment>> callback) {
+    FutureTarget<GifDrawable> future = GlideApp.with(context).asGif().load(new ChunkedImageUrl(url)).skipMemoryCache(true).diskCacheStrategy(DiskCacheStrategy.NONE)
+      .centerInside().submit(1024, 1024);
+    RequestController controller = () -> future.cancel(false);
+    SignalExecutors.UNBOUNDED.execute(() -> {
+      try {
+        GifDrawable gif = future.get();
+        byte[] bytes = ByteBufferUtil.toBytes(gif.getBuffer());
+        Uri uri = BlobProvider.getInstance().forData(bytes).createForSingleSessionInMemory();
+        Optional<Attachment> thumbnail = Optional.of(new UriAttachment(uri, uri, MediaUtil.IMAGE_GIF, AttachmentDatabase.TRANSFER_PROGRESS_DONE,
+          bytes.length, gif.getIntrinsicWidth(), gif.getIntrinsicHeight(), null, null, false, false, null, null));
+        callback.onComplete(thumbnail);
+      } catch (CancellationException | ExecutionException | InterruptedException e) {
+        controller.cancel();
+        callback.onComplete(Optional.absent());
+      } finally {
+        future.cancel(false);
+      }
+    });
+    return () -> future.cancel(true);
+  }
+
   private @NonNull RequestController fetchThumbnail(@NonNull Context context, @NonNull String imageUrl, @NonNull Callback<Optional<Attachment>> callback) {
     FutureTarget<Bitmap> bitmapFuture = GlideApp.with(context).asBitmap()
                                                               .load(new ChunkedImageUrl(imageUrl))
@@ -138,7 +184,7 @@ public class LinkPreviewRepository {
 
     RequestController controller = () -> bitmapFuture.cancel(false);
 
-    SignalExecutors.IO.execute(() -> {
+    SignalExecutors.UNBOUNDED.execute(() -> {
       try {
         Bitmap                bitmap = bitmapFuture.get();
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -158,6 +204,7 @@ public class LinkPreviewRepository {
                                                                        null,
                                                                        false,
                                                                        false,
+                                                                       null,
                                                                        null));
 
         callback.onComplete(thumbnail);
@@ -182,6 +229,66 @@ public class LinkPreviewRepository {
     }
 
     return Optional.absent();
+  }
+
+  private RequestController fetchStickerPackLinkPreview(@NonNull Context context,
+                                                        @NonNull String packUrl,
+                                                        @NonNull Callback<Optional<LinkPreview>> callback)
+  {
+    SignalExecutors.UNBOUNDED.execute(() -> {
+      try {
+        Pair<String, String> stickerParams = StickerUrl.parseShareLink(packUrl).or(new Pair<>("", ""));
+        String               packIdString  = stickerParams.first();
+        String               packKeyString = stickerParams.second();
+        byte[]               packIdBytes   = Hex.fromStringCondensed(packIdString);
+        byte[]               packKeyBytes  = Hex.fromStringCondensed(packKeyString);
+
+        SignalServiceStickerManifest manifest = messageReceiver.retrieveStickerManifest(packIdBytes, packKeyBytes);
+
+        String                title        = manifest.getTitle().or(manifest.getAuthor()).or("");
+        Optional<StickerInfo> firstSticker = Optional.fromNullable(manifest.getStickers().size() > 0 ? manifest.getStickers().get(0) : null);
+        Optional<StickerInfo> cover        = manifest.getCover().or(firstSticker);
+
+        if (cover.isPresent()) {
+          Bitmap bitmap = GlideApp.with(context).asBitmap()
+                                                .load(new StickerRemoteUri(packIdString, packKeyString, cover.get().getId()))
+                                                .skipMemoryCache(true)
+                                                .diskCacheStrategy(DiskCacheStrategy.NONE)
+                                                .centerInside()
+                                                .submit(512, 512)
+                                                .get();
+
+          ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+          bitmap.compress(Bitmap.CompressFormat.WEBP, 80, baos);
+
+          byte[]               bytes     = baos.toByteArray();
+          Uri                  uri       = BlobProvider.getInstance().forData(bytes).createForSingleSessionInMemory();
+          Optional<Attachment> thumbnail = Optional.of(new UriAttachment(uri,
+                                                       uri,
+                                                       MediaUtil.IMAGE_WEBP,
+                                                       AttachmentDatabase.TRANSFER_PROGRESS_STARTED,
+                                                       bytes.length,
+                                                       bitmap.getWidth(),
+                                                       bitmap.getHeight(),
+                                                       null,
+                                                       null,
+                                                       false,
+                                                       false,
+                                                       null,
+                                                       null));
+
+          callback.onComplete(Optional.of(new LinkPreview(packUrl, title, thumbnail)));
+        } else {
+          callback.onComplete(Optional.absent());
+        }
+      } catch (IOException | InvalidMessageException | ExecutionException | InterruptedException e) {
+        Log.w(TAG, "Failed to fetch sticker pack link preview.");
+        callback.onComplete(Optional.absent());
+      }
+    });
+
+    return () -> Log.i(TAG, "Cancelled sticker pack link preview fetch -- no effect.");
   }
 
   private static class Metadata {
@@ -210,7 +317,7 @@ public class LinkPreviewRepository {
     }
   }
 
-  interface Callback<T> {
+  public interface Callback<T> {
     void onComplete(@NonNull T result);
   }
 }

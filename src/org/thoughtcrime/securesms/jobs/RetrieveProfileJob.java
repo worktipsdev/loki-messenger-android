@@ -77,16 +77,19 @@ public class RetrieveProfileJob extends BaseJob implements InjectableType {
 
   @Override
   public void onRun() throws IOException, InvalidKeyException {
+    // Loki - Disable retrieve profile
+    /*
     try {
       if (recipient.isGroupRecipient()) handleGroupRecipient(recipient);
       else                              handleIndividualRecipient(recipient);
     } catch (InvalidNumberException e) {
       Log.w(TAG, e);
     }
+    */
   }
 
   @Override
-  public boolean onShouldRetry(Exception e) {
+  public boolean onShouldRetry(@NonNull Exception e) {
     return false;
   }
 

@@ -28,17 +28,17 @@ import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.widget.TextView;
 
-import org.thoughtcrime.securesms.imageeditor.model.EditorModel;
-import network.loki.messenger.R;
 import org.thoughtcrime.securesms.TransportOption;
 import org.thoughtcrime.securesms.components.ComposeText;
 import org.thoughtcrime.securesms.components.ControllableViewPager;
 import org.thoughtcrime.securesms.components.InputAwareLayout;
 import org.thoughtcrime.securesms.components.SendButton;
-import org.thoughtcrime.securesms.components.emoji.EmojiDrawer;
 import org.thoughtcrime.securesms.components.emoji.EmojiEditText;
+import org.thoughtcrime.securesms.components.emoji.EmojiKeyboardProvider;
 import org.thoughtcrime.securesms.components.emoji.EmojiToggle;
+import org.thoughtcrime.securesms.components.emoji.MediaKeyboard;
 import org.thoughtcrime.securesms.contactshare.SimpleTextWatcher;
+import org.thoughtcrime.securesms.imageeditor.model.EditorModel;
 import org.thoughtcrime.securesms.logging.Log;
 import org.thoughtcrime.securesms.mediapreview.MediaRailAdapter;
 import org.thoughtcrime.securesms.mms.GlideApp;
@@ -65,6 +65,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
+import network.loki.messenger.R;
+
 /**
  * Allows the user to edit and caption a set of media items before choosing to send them.
  */
@@ -87,7 +89,7 @@ public class MediaSendFragment extends Fragment implements ViewTreeObserver.OnGl
   private ViewGroup         composeContainer;
   private EmojiEditText     captionText;
   private EmojiToggle       emojiToggle;
-  private Stub<EmojiDrawer> emojiDrawer;
+  private Stub<MediaKeyboard> emojiDrawer;
   private ViewGroup         playbackControlsContainer;
   private TextView          charactersLeft;
 
@@ -168,7 +170,7 @@ public class MediaSendFragment extends Fragment implements ViewTreeObserver.OnGl
     sendButton.addOnTransportChangedListener((newTransport, manuallySelected) -> {
       presentCharactersRemaining();
       composeText.setTransport(newTransport);
-      sendButtonBkg.getBackground().setColorFilter(newTransport.getBackgroundColor(), PorterDuff.Mode.MULTIPLY);
+      sendButtonBkg.getBackground().setColorFilter(getResources().getColor(R.color.transparent), PorterDuff.Mode.MULTIPLY);
       sendButtonBkg.getBackground().invalidateSelf();
     });
 
@@ -401,8 +403,7 @@ public class MediaSendFragment extends Fragment implements ViewTreeObserver.OnGl
 
   private void onEmojiToggleClicked(View v) {
     if (!emojiDrawer.resolved()) {
-      emojiToggle.attach(emojiDrawer.get());
-      emojiDrawer.get().setEmojiEventListener(new EmojiDrawer.EmojiEventListener() {
+      emojiDrawer.get().setProviders(0, new EmojiKeyboardProvider(requireContext(), new EmojiKeyboardProvider.EmojiEventListener() {
         @Override
         public void onKeyEvent(KeyEvent keyEvent) {
           getActiveInputField().dispatchKeyEvent(keyEvent);
@@ -412,7 +413,8 @@ public class MediaSendFragment extends Fragment implements ViewTreeObserver.OnGl
         public void onEmojiSelected(String emoji) {
           getActiveInputField().insertEmoji(emoji);
         }
-      });
+      }));
+      emojiToggle.attach(emojiDrawer.get());
     }
 
     if (hud.getCurrentInput() == emojiDrawer.get()) {

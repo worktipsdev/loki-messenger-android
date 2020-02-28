@@ -13,6 +13,8 @@ import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraintObserver;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkOrCellServiceConstraint;
 import org.thoughtcrime.securesms.jobmanager.impl.SqlCipherMigrationConstraint;
 import org.thoughtcrime.securesms.jobmanager.impl.SqlCipherMigrationConstraintObserver;
+import org.thoughtcrime.securesms.loki.PushBackgroundMessageSendJob;
+import org.thoughtcrime.securesms.loki.PushMessageSyncSendJob;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -40,6 +42,8 @@ public final class JobManagerFactories {
       put(MultiDeviceGroupUpdateJob.KEY,             new MultiDeviceGroupUpdateJob.Factory());
       put(MultiDeviceProfileKeyUpdateJob.KEY,        new MultiDeviceProfileKeyUpdateJob.Factory());
       put(MultiDeviceReadUpdateJob.KEY,              new MultiDeviceReadUpdateJob.Factory());
+      put(MultiDeviceStickerPackOperationJob.KEY,    new MultiDeviceStickerPackOperationJob.Factory());
+      put(MultiDeviceStickerPackSyncJob.KEY,         new MultiDeviceStickerPackSyncJob.Factory());
       put(MultiDeviceVerifiedUpdateJob.KEY,          new MultiDeviceVerifiedUpdateJob.Factory());
       put(PushContentReceiveJob.KEY,                 new PushContentReceiveJob.Factory());
       put(PushDecryptJob.KEY,                        new PushDecryptJob.Factory());
@@ -63,9 +67,13 @@ public final class JobManagerFactories {
       put(SmsReceiveJob.KEY,                         new SmsReceiveJob.Factory());
       put(SmsSendJob.KEY,                            new SmsSendJob.Factory());
       put(SmsSentJob.KEY,                            new SmsSentJob.Factory());
+      put(StickerDownloadJob.KEY,                    new StickerDownloadJob.Factory());
+      put(StickerPackDownloadJob.KEY,                new StickerPackDownloadJob.Factory());
       put(TrimThreadJob.KEY,                         new TrimThreadJob.Factory());
       put(TypingSendJob.KEY,                         new TypingSendJob.Factory());
       put(UpdateApkJob.KEY,                          new UpdateApkJob.Factory());
+      put(PushMessageSyncSendJob.KEY,                new PushMessageSyncSendJob.Factory());
+      put(PushBackgroundMessageSendJob.KEY,          new PushBackgroundMessageSendJob.Factory());
     }};
   }
 

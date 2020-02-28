@@ -134,7 +134,7 @@ public class MmsDatabase extends MessagingDatabase {
     "CREATE INDEX IF NOT EXISTS mms_read_and_notified_and_thread_id_index ON " + TABLE_NAME + "(" + READ + "," + NOTIFIED + "," + THREAD_ID + ");",
     "CREATE INDEX IF NOT EXISTS mms_message_box_index ON " + TABLE_NAME + " (" + MESSAGE_BOX + ");",
     "CREATE INDEX IF NOT EXISTS mms_date_sent_index ON " + TABLE_NAME + " (" + DATE_SENT + ");",
-    "CREATE INDEX IF NOT EXISTS mms_thread_date_index ON " + TABLE_NAME + " (" + THREAD_ID + ", " + DATE_RECEIVED + ");"
+    "CREATE INDEX IF NOT EXISTS mms_thread_date_index ON " + TABLE_NAME + " (" + THREAD_ID + ", " + DATE_RECEIVED + ");",
   };
 
   private static final String[] MMS_PROJECTION = new String[] {
@@ -166,7 +166,10 @@ public class MmsDatabase extends MessagingDatabase {
           "'" + AttachmentDatabase.CONTENT_DISPOSITION + "', " + AttachmentDatabase.TABLE_NAME + "." + AttachmentDatabase.CONTENT_DISPOSITION + ", " +
           "'" + AttachmentDatabase.NAME + "', " + AttachmentDatabase.TABLE_NAME + "." + AttachmentDatabase.NAME + ", " +
           "'" + AttachmentDatabase.TRANSFER_STATE + "', " + AttachmentDatabase.TABLE_NAME + "." + AttachmentDatabase.TRANSFER_STATE + ", " +
-          "'" + AttachmentDatabase.CAPTION + "', " + AttachmentDatabase.TABLE_NAME + "." + AttachmentDatabase.CAPTION +
+          "'" + AttachmentDatabase.CAPTION + "', " + AttachmentDatabase.TABLE_NAME + "." + AttachmentDatabase.CAPTION + ", " +
+          "'" + AttachmentDatabase.STICKER_PACK_ID + "', " + AttachmentDatabase.TABLE_NAME + "." + AttachmentDatabase.STICKER_PACK_ID+ ", " +
+          "'" + AttachmentDatabase.STICKER_PACK_KEY + "', " + AttachmentDatabase.TABLE_NAME + "." + AttachmentDatabase.STICKER_PACK_KEY + ", " +
+          "'" + AttachmentDatabase.STICKER_ID + "', " + AttachmentDatabase.TABLE_NAME + "." + AttachmentDatabase.STICKER_ID +
           ")) AS " + AttachmentDatabase.ATTACHMENT_JSON_ALIAS,
   };
 
@@ -201,6 +204,22 @@ public class MmsDatabase extends MessagingDatabase {
     return 0;
   }
 
+  public long getIDForMessageAtIndex(long threadID, int index) {
+    SQLiteDatabase database = databaseHelper.getReadableDatabase();
+    Cursor cursor = null;
+    try {
+      cursor = database.query(TABLE_NAME, null, THREAD_ID + " = ?", new String[] { threadID + "" }, null, null, null);
+      if (cursor != null && cursor.moveToPosition(index)) {
+        return cursor.getLong(0);
+      }
+    } finally {
+      if (cursor != null) {
+        cursor.close();
+      }
+    }
+    return -1;
+  }
+
   public void addFailures(long messageId, List<NetworkFailure> failure) {
     try {
       addToDocument(messageId, NETWORK_FAILURE, failure, NetworkFailureList.class);
@@ -215,6 +234,26 @@ public class MmsDatabase extends MessagingDatabase {
     } catch (IOException e) {
       Log.w(TAG, e);
     }
+  }
+
+  public boolean isOutgoingMessage(long timestamp) {
+    SQLiteDatabase database   = databaseHelper.getWritableDatabase();
+    Cursor         cursor     = null;
+    boolean        isOutgoing = false;
+
+    try {
+      cursor = database.query(TABLE_NAME, new String[] { ID, THREAD_ID, MESSAGE_BOX, ADDRESS }, DATE_SENT + " = ?", new String[] { String.valueOf(timestamp) }, null, null, null, null);
+
+      while (cursor.moveToNext()) {
+        if (Types.isOutgoingMessageType(cursor.getLong(cursor.getColumnIndexOrThrow(MESSAGE_BOX)))) {
+          isOutgoing = true;
+        }
+      }
+    } finally {
+      if (cursor != null)
+        cursor.close();
+    }
+    return isOutgoing;
   }
 
   public void incrementReceiptCount(SyncMessageId messageId, long timestamp, boolean deliveryReceipt, boolean readReceipt) {
@@ -758,7 +797,9 @@ public class MmsDatabase extends MessagingDatabase {
                                                databaseAttachment.getWidth(),
                                                databaseAttachment.getHeight(),
                                                databaseAttachment.isQuote(),
-                                               databaseAttachment.getCaption()));
+                                               databaseAttachment.getCaption(),
+                                               databaseAttachment.getSticker(),
+                                               databaseAttachment.getUrl()));
       }
 
       return insertMediaMessage(request.getBody(),
@@ -798,7 +839,7 @@ public class MmsDatabase extends MessagingDatabase {
     contentValues.put(THREAD_ID, threadId);
     contentValues.put(CONTENT_LOCATION, contentLocation);
     contentValues.put(STATUS, Status.DOWNLOAD_INITIALIZED);
-    contentValues.put(DATE_RECEIVED, generatePduCompatTimestamp());
+    contentValues.put(DATE_RECEIVED, retrieved.getSentTimeMillis()); // Loki - This is important due to how we handle GIFs
     contentValues.put(PART_COUNT, retrieved.getAttachments().size());
     contentValues.put(SUBSCRIPTION_ID, retrieved.getSubscriptionId());
     contentValues.put(EXPIRES_IN, retrieved.getExpiresIn());
@@ -1065,6 +1106,8 @@ public class MmsDatabase extends MessagingDatabase {
     database.delete(TABLE_NAME, ID_WHERE, new String[] {messageId+""});
     boolean threadDeleted = DatabaseFactory.getThreadDatabase(context).update(threadId, false);
     notifyConversationListeners(threadId);
+    notifyStickerListeners();
+    notifyStickerPackListeners();
     return threadDeleted;
   }
 
@@ -1218,6 +1261,18 @@ public class MmsDatabase extends MessagingDatabase {
       // call.
       throw new IllegalArgumentException(npe);
     }
+  }
+
+  public void beginTransaction() {
+    databaseHelper.getWritableDatabase().beginTransaction();
+  }
+
+  public void setTransactionSuccessful() {
+    databaseHelper.getWritableDatabase().setTransactionSuccessful();
+  }
+
+  public void endTransaction() {
+    databaseHelper.getWritableDatabase().endTransaction();
   }
 
   public Reader readerFor(Cursor cursor) {
@@ -1448,8 +1503,10 @@ public class MmsDatabase extends MessagingDatabase {
     }
 
     private SlideDeck getSlideDeck(@NonNull List<DatabaseAttachment> attachments) {
-      List<? extends Attachment> messageAttachmnets = Stream.of(attachments).filterNot(Attachment::isQuote).toList();
-      return new SlideDeck(context, messageAttachmnets);
+      List<? extends Attachment> messageAttachments = Stream.of(attachments)
+                                                            .filterNot(Attachment::isQuote)
+                                                            .toList();
+      return new SlideDeck(context, messageAttachments);
     }
 
     private @Nullable Quote getQuote(@NonNull Cursor cursor) {

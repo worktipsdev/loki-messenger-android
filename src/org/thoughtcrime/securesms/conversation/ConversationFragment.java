@@ -47,6 +47,7 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.Window;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
@@ -59,7 +60,6 @@ import com.annimon.stream.Stream;
 import org.thoughtcrime.securesms.ApplicationContext;
 import org.thoughtcrime.securesms.MessageDetailsActivity;
 import org.thoughtcrime.securesms.PassphraseRequiredActionBarActivity;
-import network.loki.messenger.R;
 import org.thoughtcrime.securesms.ShareActivity;
 import org.thoughtcrime.securesms.attachments.Attachment;
 import org.thoughtcrime.securesms.components.ConversationTypingView;
@@ -80,7 +80,7 @@ import org.thoughtcrime.securesms.database.model.MmsMessageRecord;
 import org.thoughtcrime.securesms.jobs.DirectoryRefreshJob;
 import org.thoughtcrime.securesms.linkpreview.LinkPreview;
 import org.thoughtcrime.securesms.logging.Log;
-import org.thoughtcrime.securesms.loki.FriendRequestViewDelegate;
+import org.thoughtcrime.securesms.loki.redesign.views.FriendRequestViewDelegate;
 import org.thoughtcrime.securesms.longmessage.LongMessageActivity;
 import org.thoughtcrime.securesms.mediasend.Media;
 import org.thoughtcrime.securesms.mms.GlideApp;
@@ -91,6 +91,8 @@ import org.thoughtcrime.securesms.profiles.UnknownSenderView;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.sms.MessageSender;
 import org.thoughtcrime.securesms.sms.OutgoingTextMessage;
+import org.thoughtcrime.securesms.stickers.StickerLocator;
+import org.thoughtcrime.securesms.stickers.StickerPackPreviewActivity;
 import org.thoughtcrime.securesms.util.CommunicationActions;
 import org.thoughtcrime.securesms.util.SaveAttachmentTask;
 import org.thoughtcrime.securesms.util.StickyHeaderDecoration;
@@ -100,6 +102,8 @@ import org.thoughtcrime.securesms.util.ViewUtil;
 import org.thoughtcrime.securesms.util.concurrent.SimpleTask;
 import org.thoughtcrime.securesms.util.task.ProgressDialogAsyncTask;
 import org.whispersystems.libsignal.util.guava.Optional;
+import org.whispersystems.signalservice.loki.api.LokiPublicChat;
+import org.whispersystems.signalservice.loki.api.LokiPublicChatAPI;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -110,6 +114,8 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+
+import network.loki.messenger.R;
 
 @SuppressLint("StaticFieldLeak")
 public class ConversationFragment extends Fragment
@@ -355,7 +361,7 @@ public class ConversationFragment extends Fragment
       if (messageRecord.isGroupAction() || messageRecord.isCallLog() ||
           messageRecord.isJoined() || messageRecord.isExpirationTimerUpdate() ||
           messageRecord.isEndSession() || messageRecord.isIdentityUpdate() ||
-          messageRecord.isIdentityVerified() || messageRecord.isIdentityDefault())
+          messageRecord.isIdentityVerified() || messageRecord.isIdentityDefault() || messageRecord.isLokiSessionRestoreSent())
       {
         actionMessage = true;
       }
@@ -379,10 +385,11 @@ public class ConversationFragment extends Fragment
       MessageRecord messageRecord = messageRecords.iterator().next();
 
       menu.findItem(R.id.menu_context_resend).setVisible(messageRecord.isFailed());
-      menu.findItem(R.id.menu_context_save_attachment).setVisible(!actionMessage                     &&
-                                                                  messageRecord.isMms()              &&
-                                                                  !messageRecord.isMmsNotification() &&
-                                                                  ((MediaMmsMessageRecord)messageRecord).containsMediaSlide());
+      menu.findItem(R.id.menu_context_save_attachment).setVisible(!actionMessage                                              &&
+                                                                  messageRecord.isMms()                                       &&
+                                                                  !messageRecord.isMmsNotification()                          &&
+                                                                  ((MediaMmsMessageRecord)messageRecord).containsMediaSlide() &&
+                                                                  ((MediaMmsMessageRecord)messageRecord).getSlideDeck().getStickerSlide() == null);
 
       /*
       menu.findItem(R.id.menu_context_forward).setVisible(!actionMessage && !sharedContact);
@@ -394,6 +401,27 @@ public class ConversationFragment extends Fragment
                                                         messageRecord.isSecure());
     }
     menu.findItem(R.id.menu_context_copy).setVisible(!actionMessage && hasText);
+
+    boolean isGroupChat = recipient.isGroupRecipient();
+
+    if (isGroupChat) {
+      LokiPublicChat publicChat = DatabaseFactory.getLokiThreadDatabase(getContext()).getPublicChat(threadId);
+      boolean isPublicChat = publicChat != null;
+      int selectedMessageCount = messageRecords.size();
+      boolean areAllSentByUser = true;
+      for (MessageRecord message : messageRecords) {
+        if (!message.isOutgoing()) { areAllSentByUser = false; }
+      }
+      menu.findItem(R.id.menu_context_copy_public_key).setVisible(isPublicChat && selectedMessageCount == 1 && !areAllSentByUser);
+      menu.findItem(R.id.menu_context_reply).setVisible(isPublicChat && selectedMessageCount == 1);
+      String userHexEncodedPublicKey = TextSecurePreferences.getLocalNumber(getContext());
+      boolean userCanModerate = isPublicChat && LokiPublicChatAPI.Companion.isUserModerator(userHexEncodedPublicKey, publicChat.getChannel(), publicChat.getServer());
+      boolean isDeleteOptionVisible = isPublicChat && (areAllSentByUser || userCanModerate);
+      menu.findItem(R.id.menu_context_delete_message).setVisible(isDeleteOptionVisible);
+    } else {
+      menu.findItem(R.id.menu_context_copy_public_key).setVisible(false);
+      menu.findItem(R.id.menu_context_delete_message).setVisible(true);
+    }
   }
 
   private ConversationAdapter getListAdapter() {
@@ -468,6 +496,11 @@ public class ConversationFragment extends Fragment
         clipboard.setText(result);
   }
 
+  private void handleCopyPublicKey(MessageRecord messageRecord) {
+    ClipboardManager clipboard = (ClipboardManager) getActivity().getSystemService(Context.CLIPBOARD_SERVICE);
+    clipboard.setText(messageRecord.getRecipient().getAddress().toString());
+  }
+
   private void handleDeleteMessages(final Set<MessageRecord> messageRecords) {
     int                 messagesCount = messageRecords.size();
     AlertDialog.Builder builder       = new AlertDialog.Builder(getActivity());
@@ -476,6 +509,8 @@ public class ConversationFragment extends Fragment
     builder.setTitle(getActivity().getResources().getQuantityString(R.plurals.ConversationFragment_delete_selected_messages, messagesCount, messagesCount));
     builder.setMessage(getActivity().getResources().getQuantityString(R.plurals.ConversationFragment_this_will_permanently_delete_all_n_selected_messages, messagesCount, messagesCount));
     builder.setCancelable(true);
+
+    LokiPublicChat publicChat = DatabaseFactory.getLokiThreadDatabase(getContext()).getPublicChat(threadId);
 
     builder.setPositiveButton(R.string.delete, new DialogInterface.OnClickListener() {
       @Override
@@ -486,21 +521,53 @@ public class ConversationFragment extends Fragment
         {
           @Override
           protected Void doInBackground(MessageRecord... messageRecords) {
-            for (MessageRecord messageRecord : messageRecords) {
-              boolean threadDeleted;
-
-              if (messageRecord.isMms()) {
-                threadDeleted = DatabaseFactory.getMmsDatabase(getActivity()).delete(messageRecord.getId());
-              } else {
-                threadDeleted = DatabaseFactory.getSmsDatabase(getActivity()).deleteMessage(messageRecord.getId());
+            if (publicChat != null) {
+              ArrayList<Long> serverIDs = new ArrayList<>();
+              ArrayList<Long> ignoredMessages = new ArrayList<>();
+              ArrayList<Long> failedMessages = new ArrayList<>();
+              boolean isSentByUser = true;
+              LokiPublicChatAPI publicChatAPI = ApplicationContext.getInstance(getContext()).getLokiPublicChatAPI();
+              for (MessageRecord messageRecord : messageRecords) {
+                isSentByUser = isSentByUser && messageRecord.isOutgoing();
+                Long serverID = DatabaseFactory.getLokiMessageDatabase(getContext()).getServerID(messageRecord.id);
+                if (serverID != null) {
+                  serverIDs.add(serverID);
+                } else {
+                  ignoredMessages.add(messageRecord.getId());
+                }
               }
-
-              if (threadDeleted) {
-                threadId = -1;
-                listener.setThreadId(threadId);
+              if (publicChat != null && publicChatAPI != null) {
+                publicChatAPI
+                .deleteMessages(serverIDs, publicChat.getChannel(), publicChat.getServer(), isSentByUser)
+                .success(l -> {
+                  for (MessageRecord messageRecord : messageRecords) {
+                    Long serverID = DatabaseFactory.getLokiMessageDatabase(getContext()).getServerID(messageRecord.id);
+                    if (l.contains(serverID)) {
+                      if (messageRecord.isMms()) {
+                        DatabaseFactory.getMmsDatabase(getActivity()).delete(messageRecord.getId());
+                      } else {
+                        DatabaseFactory.getSmsDatabase(getActivity()).deleteMessage(messageRecord.getId());
+                      }
+                    } else if (!ignoredMessages.contains(serverID)) {
+                      failedMessages.add(messageRecord.getId());
+                      Log.d("Loki", "Failed to delete message: " + messageRecord.getId() + ".");
+                    }
+                  }
+                  return null;
+                }). fail(e -> {
+                  Log.d("Loki", "Couldn't delete message due to error: " + e.toString() + ".");
+                  return null;
+                });
+              }
+            } else {
+              for (MessageRecord messageRecord : messageRecords) {
+                if (messageRecord.isMms()) {
+                  DatabaseFactory.getMmsDatabase(getActivity()).delete(messageRecord.getId());
+                } else {
+                  DatabaseFactory.getSmsDatabase(getActivity()).deleteMessage(messageRecord.getId());
+                }
               }
             }
-
             return null;
           }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, messageRecords.toArray(new MessageRecord[messageRecords.size()]));
@@ -530,10 +597,11 @@ public class ConversationFragment extends Fragment
 
       if (message.isMms()) {
         MmsMessageRecord mediaMessage = (MmsMessageRecord) message;
-        boolean          isAlbum      = mediaMessage.containsMediaSlide()                   &&
-                                        mediaMessage.getSlideDeck().getSlides().size() > 1  &&
-                                        mediaMessage.getSlideDeck().getAudioSlide() == null &&
-                                        mediaMessage.getSlideDeck().getDocumentSlide() == null;
+        boolean          isAlbum      = mediaMessage.containsMediaSlide()                      &&
+                                        mediaMessage.getSlideDeck().getSlides().size() > 1     &&
+                                        mediaMessage.getSlideDeck().getAudioSlide() == null    &&
+                                        mediaMessage.getSlideDeck().getDocumentSlide() == null &&
+                                        mediaMessage.getSlideDeck().getStickerSlide() == null;
 
         if (isAlbum) {
           ArrayList<Media> mediaList   = new ArrayList<>(mediaMessage.getSlideDeck().getSlides().size());
@@ -564,6 +632,10 @@ public class ConversationFragment extends Fragment
           Slide slide = mediaMessage.getSlideDeck().getSlides().get(0);
           composeIntent.putExtra(Intent.EXTRA_STREAM, slide.getUri());
           composeIntent.setType(slide.getContentType());
+
+          if (slide.hasSticker()) {
+            composeIntent.putExtra(ConversationActivity.STICKER_EXTRA, slide.asAttachment().getSticker());
+          }
         }
 
         if (mediaMessage.getSlideDeck().getTextSlide() != null && mediaMessage.getSlideDeck().getTextSlide().getUri() != null) {
@@ -617,7 +689,7 @@ public class ConversationFragment extends Fragment
   }
 
   @Override
-  public Loader<Cursor> onCreateLoader(int id, Bundle args) {
+  public @NonNull Loader<Cursor> onCreateLoader(int id, Bundle args) {
     Log.i(TAG, "onCreateLoader");
     loaderStartTime = System.currentTimeMillis();
 
@@ -632,7 +704,7 @@ public class ConversationFragment extends Fragment
   }
 
   @Override
-  public void onLoadFinished(Loader<Cursor> cursorLoader, Cursor cursor) {
+  public void onLoadFinished(@NonNull Loader<Cursor> cursorLoader, Cursor cursor) {
     long loadTime = System.currentTimeMillis() - loaderStartTime;
     int  count    = cursor.getCount();
     Log.i(TAG, "onLoadFinished - took " + loadTime + " ms to load a cursor of size " + count);
@@ -708,7 +780,7 @@ public class ConversationFragment extends Fragment
   }
 
   @Override
-  public void onLoaderReset(Loader<Cursor> arg0) {
+  public void onLoaderReset(@NonNull Loader<Cursor> arg0) {
     if (list.getAdapter() != null) {
       getListAdapter().changeCursor(null);
     }
@@ -831,7 +903,7 @@ public class ConversationFragment extends Fragment
     }
 
     @Override
-    public void onScrolled(final RecyclerView rv, final int dx, final int dy) {
+    public void onScrolled(@NonNull final RecyclerView rv, final int dx, final int dy) {
       boolean currentlyAtBottom           = isAtBottom();
       boolean currentlyAtZoomScrollHeight = isAtZoomScrollHeight();
       int     positionId                  = getHeaderPositionId();
@@ -857,7 +929,7 @@ public class ConversationFragment extends Fragment
     }
 
     @Override
-    public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
+    public void onScrollStateChanged(@NonNull RecyclerView recyclerView, int newState) {
       if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
         conversationDateHeader.show();
       } else if (newState == RecyclerView.SCROLL_STATE_IDLE) {
@@ -904,6 +976,15 @@ public class ConversationFragment extends Fragment
         list.getAdapter().notifyDataSetChanged();
 
         actionMode = ((AppCompatActivity)getActivity()).startSupportActionMode(actionModeCallback);
+
+        View titleTextView = (getActivity().findViewById(R.id.action_bar_title));
+        if (titleTextView != null) {
+          titleTextView.setBackgroundColor(getResources().getColor(R.color.transparent));
+          ViewParent titleTextViewContainerView = titleTextView.getParent();
+          if (titleTextViewContainerView != null) {
+            ((View)titleTextViewContainerView).setBackgroundColor(getResources().getColor(R.color.transparent));
+          }
+        }
       }
     }
 
@@ -941,6 +1022,13 @@ public class ConversationFragment extends Fragment
     public void onMoreTextClicked(@NonNull Address conversationAddress, long messageId, boolean isMms) {
       if (getContext() != null && getActivity() != null) {
         startActivity(LongMessageActivity.getIntent(getContext(), conversationAddress, messageId, isMms));
+      }
+    }
+
+    @Override
+    public void onStickerClicked(@NonNull StickerLocator sticker) {
+      if (getContext() != null && getActivity() != null) {
+        startActivity(StickerPackPreviewActivity.getIntent(sticker.getPackId(), sticker.getPackKey()));
       }
     }
 
@@ -983,7 +1071,7 @@ public class ConversationFragment extends Fragment
       if (getContext() == null) return;
 
       ContactUtil.selectRecipientThroughDialog(getContext(), choices, locale, recipient -> {
-        CommunicationActions.composeSmsThroughDefaultApp(getContext(), recipient.getAddress(), getString(R.string.InviteActivity_lets_switch_to_signal, "https://sgnl.link/1KpeYmF"));
+        CommunicationActions.composeSmsThroughDefaultApp(getContext(), recipient.getAddress(), getString(R.string.InviteActivity_lets_switch_to_signal, getString(R.string.install_url)));
       });
     }
   }
@@ -1013,7 +1101,6 @@ public class ConversationFragment extends Fragment
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
         Window window = getActivity().getWindow();
         statusBarColor = window.getStatusBarColor();
-        window.setStatusBarColor(getResources().getColor(R.color.action_mode_status_bar));
       }
 
       setCorrectMenuVisibility(menu);
@@ -1043,6 +1130,10 @@ public class ConversationFragment extends Fragment
       switch(item.getItemId()) {
         case R.id.menu_context_copy:
           handleCopyMessage(getListAdapter().getSelectedItems());
+          actionMode.finish();
+          return true;
+        case R.id.menu_context_copy_public_key:
+          handleCopyPublicKey((MessageRecord) getListAdapter().getSelectedItems().toArray()[0]);
           actionMode.finish();
           return true;
         case R.id.menu_context_delete_message:

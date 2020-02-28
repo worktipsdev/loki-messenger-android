@@ -20,18 +20,22 @@ import android.widget.TextView;
 import com.annimon.stream.Stream;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 
-import network.loki.messenger.R;
 import org.thoughtcrime.securesms.attachments.Attachment;
+import org.thoughtcrime.securesms.database.DatabaseFactory;
 import org.thoughtcrime.securesms.mms.DecryptableStreamUriLoader.DecryptableUri;
 import org.thoughtcrime.securesms.mms.GlideRequests;
 import org.thoughtcrime.securesms.mms.Slide;
 import org.thoughtcrime.securesms.mms.SlideDeck;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientModifiedListener;
+import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.thoughtcrime.securesms.util.ThemeUtil;
 import org.thoughtcrime.securesms.util.Util;
+import org.whispersystems.signalservice.loki.api.LokiPublicChat;
 
 import java.util.List;
+
+import network.loki.messenger.R;
 
 public class QuoteView extends FrameLayout implements RecipientModifiedListener {
 
@@ -55,6 +59,7 @@ public class QuoteView extends FrameLayout implements RecipientModifiedListener 
   private long       id;
   private Recipient  author;
   private String     body;
+  private Recipient  conversationRecipient;
   private TextView   mediaDescriptionText;
   private TextView   missingLinkText;
   private SlideDeck  attachments;
@@ -100,7 +105,7 @@ public class QuoteView extends FrameLayout implements RecipientModifiedListener 
     this.dismissView                  = findViewById(R.id.quote_dismiss);
     this.mediaDescriptionText         = findViewById(R.id.media_type);
     this.missingLinkText              = findViewById(R.id.quote_missing_text);
-    this.largeCornerRadius            = getResources().getDimensionPixelSize(R.dimen.quote_corner_radius_large);
+    this.largeCornerRadius            = getResources().getDimensionPixelSize(R.dimen.quote_corner_radius_bottom);
     this.smallCornerRadius            = getResources().getDimensionPixelSize(R.dimen.quote_corner_radius_bottom);
 
     cornerMask = new CornerMask(this);
@@ -142,7 +147,8 @@ public class QuoteView extends FrameLayout implements RecipientModifiedListener 
                        @NonNull Recipient author,
                        @Nullable String body,
                        boolean originalMissing,
-                       @NonNull SlideDeck attachments)
+                       @NonNull SlideDeck attachments,
+                       @NonNull Recipient conversationRecipient)
   {
     if (this.author != null) this.author.removeListener(this);
 
@@ -150,6 +156,7 @@ public class QuoteView extends FrameLayout implements RecipientModifiedListener 
     this.author      = author;
     this.body        = body;
     this.attachments = attachments;
+    this.conversationRecipient = conversationRecipient;
 
     author.addListener(this);
     setQuoteAuthor(author);
@@ -186,12 +193,24 @@ public class QuoteView extends FrameLayout implements RecipientModifiedListener 
     boolean outgoing    = messageType != MESSAGE_TYPE_INCOMING;
     boolean isOwnNumber = Util.isOwnNumber(getContext(), author.getAddress());
 
-    authorView.setText(isOwnNumber ? getContext().getString(R.string.QuoteView_you)
-                                   : author.toShortString());
+    String quoteeDisplayName = author.toShortString();
+
+    long threadID = DatabaseFactory.getThreadDatabase(getContext()).getThreadIdFor(conversationRecipient);
+    String senderHexEncodedPublicKey = author.getAddress().serialize();
+    LokiPublicChat publicChat = DatabaseFactory.getLokiThreadDatabase(getContext()).getPublicChat(threadID);
+    if (senderHexEncodedPublicKey.equalsIgnoreCase(TextSecurePreferences.getLocalNumber(getContext()))) {
+      quoteeDisplayName = TextSecurePreferences.getProfileName(getContext());
+    } else if (publicChat != null) {
+      quoteeDisplayName = DatabaseFactory.getLokiUserDatabase(getContext()).getServerDisplayName(publicChat.getId(), senderHexEncodedPublicKey);
+    } else {
+      quoteeDisplayName = DatabaseFactory.getLokiUserDatabase(getContext()).getDisplayName(senderHexEncodedPublicKey);
+    }
+
+    authorView.setText(isOwnNumber ? getContext().getString(R.string.QuoteView_you) : quoteeDisplayName);
 
     // We use the raw color resource because Android 4.x was struggling with tints here
-    quoteBarView.setImageResource(author.getColor().toQuoteBarColorResource(getContext(), outgoing));
-    mainView.setBackgroundColor(author.getColor().toQuoteBackgroundColor(getContext(), outgoing));
+    quoteBarView.setImageResource(R.color.accent);
+    mainView.setBackgroundColor(getResources().getColor(outgoing ? R.color.received_message_background : R.color.sent_message_background));
   }
 
   private void setQuoteText(@Nullable String body, @NonNull SlideDeck attachments) {
@@ -209,6 +228,7 @@ public class QuoteView extends FrameLayout implements RecipientModifiedListener 
     List<Slide> documentSlides = Stream.of(attachments.getSlides()).filter(Slide::hasDocument).limit(1).toList();
     List<Slide> imageSlides    = Stream.of(attachments.getSlides()).filter(Slide::hasImage).limit(1).toList();
     List<Slide> videoSlides    = Stream.of(attachments.getSlides()).filter(Slide::hasVideo).limit(1).toList();
+    List<Slide> stickerSlides  = Stream.of(attachments.getSlides()).filter(Slide::hasSticker).limit(1).toList();
 
     // Given that most types have images, we specifically check images last
     if (!audioSlides.isEmpty()) {
@@ -217,13 +237,15 @@ public class QuoteView extends FrameLayout implements RecipientModifiedListener 
       mediaDescriptionText.setVisibility(GONE);
     } else if (!videoSlides.isEmpty()) {
       mediaDescriptionText.setText(R.string.QuoteView_video);
+    } else if (!stickerSlides.isEmpty()) {
+      mediaDescriptionText.setText(R.string.QuoteView_sticker);
     } else if (!imageSlides.isEmpty()) {
       mediaDescriptionText.setText(R.string.QuoteView_photo);
     }
   }
 
   private void setQuoteAttachment(@NonNull GlideRequests glideRequests, @NonNull SlideDeck slideDeck) {
-    List<Slide> imageVideoSlides = Stream.of(slideDeck.getSlides()).filter(s -> s.hasImage() || s.hasVideo()).limit(1).toList();
+    List<Slide> imageVideoSlides = Stream.of(slideDeck.getSlides()).filter(s -> s.hasImage() || s.hasVideo() || s.hasSticker()).limit(1).toList();
     List<Slide> documentSlides   = Stream.of(attachments.getSlides()).filter(Slide::hasDocument).limit(1).toList();
 
     attachmentVideoOverlayView.setVisibility(GONE);
@@ -256,7 +278,7 @@ public class QuoteView extends FrameLayout implements RecipientModifiedListener 
 
   private void setQuoteMissingFooter(boolean missing) {
     footerView.setVisibility(missing ? VISIBLE : GONE);
-    footerView.setBackgroundColor(author.getColor().toQuoteFooterColor(getContext(), messageType != MESSAGE_TYPE_INCOMING));
+    footerView.setBackgroundColor(getResources().getColor(R.color.quote_not_found_background));
   }
 
   public long getQuoteId() {

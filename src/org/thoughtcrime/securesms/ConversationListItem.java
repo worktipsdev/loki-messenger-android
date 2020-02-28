@@ -37,6 +37,8 @@ import org.thoughtcrime.securesms.components.FromTextView;
 import org.thoughtcrime.securesms.components.ThumbnailView;
 import org.thoughtcrime.securesms.components.TypingIndicatorView;
 import org.thoughtcrime.securesms.database.model.ThreadRecord;
+import org.thoughtcrime.securesms.loki.redesign.messaging.LokiAPIUtilities;
+import org.thoughtcrime.securesms.loki.redesign.utilities.MentionUtilities;
 import org.thoughtcrime.securesms.mms.GlideRequests;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientModifiedListener;
@@ -202,7 +204,7 @@ public class ConversationListItem extends RelativeLayout
     String name = recipient.isLocalNumber() ? getContext().getString(R.string.note_to_self) : recipient.getName();
 
     fromView.setText(SearchUtil.getHighlightedSpan(locale, () -> new StyleSpan(Typeface.BOLD), name, highlightSubstring));
-    subjectView.setText(SearchUtil.getHighlightedSpan(locale, () -> new StyleSpan(Typeface.BOLD), contact.getAddress().toPhoneString(), highlightSubstring));
+    subjectView.setText(SearchUtil.getHighlightedSpan(locale, () -> new StyleSpan(Typeface.BOLD), contact.getAddress().toString(), highlightSubstring));
     dateView.setText("");
     archivedView.setVisibility(GONE);
     unreadIndicator.setVisibility(GONE);
@@ -270,8 +272,9 @@ public class ConversationListItem extends RelativeLayout
   }
 
   private @NonNull CharSequence getTrimmedSnippet(@NonNull CharSequence snippet) {
-    return snippet.length() <= MAX_SNIPPET_LENGTH ? snippet
-                                                  : snippet.subSequence(0, MAX_SNIPPET_LENGTH);
+    LokiAPIUtilities.INSTANCE.populateUserHexEncodedPublicKeyCacheIfNeeded(threadId, getContext()); // TODO: Terrible place to do this, but okay for now
+    snippet = MentionUtilities.highlightMentions(snippet, threadId, getContext());
+    return snippet.length() <= MAX_SNIPPET_LENGTH ? snippet : snippet.subSequence(0, MAX_SNIPPET_LENGTH);
   }
 
   private void setThumbnailSnippet(ThreadRecord thread) {

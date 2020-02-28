@@ -24,7 +24,6 @@ import org.whispersystems.signalservice.api.messages.SignalServiceAttachmentPoin
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Collections;
 import java.util.LinkedList;
@@ -50,6 +49,10 @@ public class GroupDatabase extends Database {
   private static final String ACTIVE              = "active";
   private static final String MMS                 = "mms";
 
+  // Loki
+  private static final String AVATAR_URL          = "avatar_url";
+  private static final String ADMINS              = "admins";
+
   public static final String CREATE_TABLE =
       "CREATE TABLE " + TABLE_NAME +
           " (" + ID + " INTEGER PRIMARY KEY, " +
@@ -64,6 +67,8 @@ public class GroupDatabase extends Database {
           TIMESTAMP + " INTEGER, " +
           ACTIVE + " INTEGER DEFAULT 1, " +
           AVATAR_DIGEST + " BLOB, " +
+          AVATAR_URL + " TEXT, " +
+          ADMINS + " TEXT, " +
           MMS + " INTEGER DEFAULT 0);";
 
   public static final String[] CREATE_INDEXS = {
@@ -72,7 +77,7 @@ public class GroupDatabase extends Database {
 
   private static final String[] GROUP_PROJECTION = {
       GROUP_ID, TITLE, MEMBERS, AVATAR, AVATAR_ID, AVATAR_KEY, AVATAR_CONTENT_TYPE, AVATAR_RELAY, AVATAR_DIGEST,
-      TIMESTAMP, ACTIVE, MMS
+      TIMESTAMP, ACTIVE, MMS, AVATAR_URL, ADMINS
   };
 
   static final List<String> TYPED_GROUP_PROJECTION = Stream.of(GROUP_PROJECTION).map(columnName -> TABLE_NAME + "." + columnName).toList();
@@ -112,8 +117,9 @@ public class GroupDatabase extends Database {
     return new Reader(cursor);
   }
 
-  public String getOrCreateGroupForMembers(List<Address> members, boolean mms) {
+  public String getOrCreateGroupForMembers(List<Address> members, boolean mms, List<Address> admins) {
     Collections.sort(members);
+    Collections.sort(admins);
 
     Cursor cursor = databaseHelper.getReadableDatabase().query(TABLE_NAME, new String[] {GROUP_ID},
                                                                MEMBERS + " = ? AND " + MMS + " = ?",
@@ -124,7 +130,7 @@ public class GroupDatabase extends Database {
         return cursor.getString(cursor.getColumnIndexOrThrow(GROUP_ID));
       } else {
         String groupId = GroupUtil.getEncodedId(allocateGroupId(), mms);
-        create(groupId, null, members, null, null);
+        create(groupId, null, members, null, null, admins);
         return groupId;
       }
     } finally {
@@ -146,14 +152,33 @@ public class GroupDatabase extends Database {
       if (!includeSelf && Util.isOwnNumber(context, member))
         continue;
 
-      recipients.add(Recipient.from(context, member, false));
+      if (member.isPhone()) {
+        recipients.add(Recipient.from(context, member, false));
+      }
     }
 
     return recipients;
   }
 
+  public boolean signalGroupsHaveMember(String hexEncodedPublicKey) {
+    try {
+      Address address = Address.fromSerialized(hexEncodedPublicKey);
+      Reader reader = DatabaseFactory.getGroupDatabase(context).getGroups();
+      GroupRecord record;
+      while ((record = reader.getNext()) != null) {
+        if (record.isSignalGroup() && record.members.contains(address)) {
+            return true;
+        }
+      }
+
+      return false;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
   public void create(@NonNull String groupId, @Nullable String title, @NonNull List<Address> members,
-                     @Nullable SignalServiceAttachmentPointer avatar, @Nullable String relay)
+                     @Nullable SignalServiceAttachmentPointer avatar, @Nullable String relay, @Nullable List<Address> admins)
   {
     Collections.sort(members);
 
@@ -167,12 +192,17 @@ public class GroupDatabase extends Database {
       contentValues.put(AVATAR_KEY, avatar.getKey());
       contentValues.put(AVATAR_CONTENT_TYPE, avatar.getContentType());
       contentValues.put(AVATAR_DIGEST, avatar.getDigest().orNull());
+      contentValues.put(AVATAR_URL, avatar.getUrl());
     }
 
     contentValues.put(AVATAR_RELAY, relay);
     contentValues.put(TIMESTAMP, System.currentTimeMillis());
     contentValues.put(ACTIVE, 1);
     contentValues.put(MMS, GroupUtil.isMmsGroup(groupId));
+
+    if (admins != null) {
+      contentValues.put(ADMINS, Address.toSerializedList(admins, ','));
+    }
 
     databaseHelper.getWritableDatabase().insert(TABLE_NAME, null, contentValues);
 
@@ -194,6 +224,7 @@ public class GroupDatabase extends Database {
       contentValues.put(AVATAR_CONTENT_TYPE, avatar.getContentType());
       contentValues.put(AVATAR_KEY, avatar.getKey());
       contentValues.put(AVATAR_DIGEST, avatar.getDigest().orNull());
+      contentValues.put(AVATAR_URL, avatar.getUrl());
     }
 
     databaseHelper.getWritableDatabase().update(TABLE_NAME, contentValues,
@@ -252,6 +283,17 @@ public class GroupDatabase extends Database {
     Recipient.applyCached(Address.fromSerialized(groupId), recipient -> {
       recipient.setParticipants(Stream.of(members).map(a -> Recipient.from(context, a, false)).toList());
     });
+  }
+
+  public void updateAdmins(String groupId, List<Address> admins) {
+    Collections.sort(admins);
+
+    ContentValues contents = new ContentValues();
+    contents.put(ADMINS, Address.toSerializedList(admins, ','));
+    contents.put(ACTIVE, 1);
+
+    databaseHelper.getWritableDatabase().update(TABLE_NAME, contents, GROUP_ID + " = ?",
+            new String[] {groupId});
   }
 
   public void remove(String groupId, Address source) {
@@ -344,7 +386,9 @@ public class GroupDatabase extends Database {
                              cursor.getString(cursor.getColumnIndexOrThrow(AVATAR_RELAY)),
                              cursor.getInt(cursor.getColumnIndexOrThrow(ACTIVE)) == 1,
                              cursor.getBlob(cursor.getColumnIndexOrThrow(AVATAR_DIGEST)),
-                             cursor.getInt(cursor.getColumnIndexOrThrow(MMS)) == 1);
+                             cursor.getInt(cursor.getColumnIndexOrThrow(MMS)) == 1,
+                             cursor.getString(cursor.getColumnIndexOrThrow(AVATAR_URL)),
+                             cursor.getString(cursor.getColumnIndexOrThrow(ADMINS)));
     }
 
     @Override
@@ -367,10 +411,12 @@ public class GroupDatabase extends Database {
     private final String        relay;
     private final boolean       active;
     private final boolean       mms;
+    private final String        url;
+    private final List<Address> admins;
 
     public GroupRecord(String id, String title, String members, byte[] avatar,
                        long avatarId, byte[] avatarKey, String avatarContentType,
-                       String relay, boolean active, byte[] avatarDigest, boolean mms)
+                       String relay, boolean active, byte[] avatarDigest, boolean mms, String url, String admins)
     {
       this.id                = id;
       this.title             = title;
@@ -382,9 +428,13 @@ public class GroupDatabase extends Database {
       this.relay             = relay;
       this.active            = active;
       this.mms               = mms;
+      this.url               = url;
 
       if (!TextUtils.isEmpty(members)) this.members = Address.fromSerializedList(members, ',');
       else                             this.members = new LinkedList<>();
+
+      if (!TextUtils.isEmpty(admins)) this.admins = Address.fromSerializedList(admins, ',');
+      else                            this.admins = new LinkedList<>();
     }
 
     public byte[] getId() {
@@ -438,5 +488,15 @@ public class GroupDatabase extends Database {
     public boolean isMms() {
       return mms;
     }
+
+    public boolean isPublicChat() { return Address.fromSerialized(id).isPublicChat(); }
+
+    public boolean isRSSFeed() { return Address.fromSerialized(id).isRSSFeed(); }
+
+    public boolean isSignalGroup() { return Address.fromSerialized(id).isSignalGroup(); }
+
+    public String getUrl() { return url; }
+
+    public List<Address> getAdmins() { return admins; }
   }
 }

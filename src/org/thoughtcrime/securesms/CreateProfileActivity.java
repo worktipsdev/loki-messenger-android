@@ -31,13 +31,14 @@ import com.dd.CircularProgressButton;
 import org.thoughtcrime.securesms.avatar.AvatarSelection;
 import org.thoughtcrime.securesms.components.InputAwareLayout;
 import org.thoughtcrime.securesms.components.LabeledEditText;
-import org.thoughtcrime.securesms.components.emoji.EmojiDrawer;
+import org.thoughtcrime.securesms.components.emoji.EmojiKeyboardProvider;
 import org.thoughtcrime.securesms.components.emoji.EmojiToggle;
+import org.thoughtcrime.securesms.components.emoji.MediaKeyboard;
 import org.thoughtcrime.securesms.contacts.avatars.ResourceContactPhoto;
 import org.thoughtcrime.securesms.crypto.ProfileKeyUtil;
 import org.thoughtcrime.securesms.database.Address;
+import org.thoughtcrime.securesms.database.DatabaseFactory;
 import org.thoughtcrime.securesms.dependencies.InjectableType;
-import org.thoughtcrime.securesms.jobs.MultiDeviceProfileKeyUpdateJob;
 import org.thoughtcrime.securesms.logging.Log;
 import org.thoughtcrime.securesms.mms.GlideApp;
 import org.thoughtcrime.securesms.permissions.Permissions;
@@ -56,15 +57,24 @@ import org.thoughtcrime.securesms.util.concurrent.ListenableFuture;
 import org.whispersystems.signalservice.api.SignalServiceAccountManager;
 import org.whispersystems.signalservice.api.crypto.ProfileCipher;
 import org.whispersystems.signalservice.api.util.StreamDetails;
+import org.whispersystems.signalservice.loki.api.LokiDotNetAPI;
+import org.whispersystems.signalservice.loki.api.LokiFileServerAPI;
+import org.whispersystems.signalservice.loki.api.LokiPublicChatAPI;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.security.SecureRandom;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.inject.Inject;
 
+import kotlin.Unit;
 import network.loki.messenger.R;
 
 @SuppressLint("StaticFieldLeak")
@@ -85,10 +95,11 @@ public class CreateProfileActivity extends BaseActionBarActivity implements Inje
   private CircularProgressButton finishButton;
   private LabeledEditText        name;
   private EmojiToggle            emojiToggle;
-  private EmojiDrawer            emojiDrawer;
+  private MediaKeyboard          mediaKeyboard;
   private View                   reveal;
 
   private Intent nextIntent;
+  private byte[] originalAvatarBytes;
   private byte[] avatarBytes;
   private File   captureFile;
 
@@ -128,7 +139,7 @@ public class CreateProfileActivity extends BaseActionBarActivity implements Inje
   public void onConfigurationChanged(Configuration newConfig) {
     super.onConfigurationChanged(newConfig);
 
-    if (container.getCurrentInput() == emojiDrawer) {
+    if (container.getCurrentInput() == mediaKeyboard) {
       container.hideAttachedInput(true);
     }
   }
@@ -201,7 +212,7 @@ public class CreateProfileActivity extends BaseActionBarActivity implements Inje
     this.avatar       = ViewUtil.findById(this, R.id.avatar);
     this.name         = ViewUtil.findById(this, R.id.name);
     this.emojiToggle  = ViewUtil.findById(this, R.id.emoji_toggle);
-    this.emojiDrawer  = ViewUtil.findById(this, R.id.emoji_drawer);
+    this.mediaKeyboard = ViewUtil.findById(this, R.id.emoji_drawer);
     this.container    = ViewUtil.findById(this, R.id.container);
     this.finishButton = ViewUtil.findById(this, R.id.finish_button);
     this.reveal       = ViewUtil.findById(this, R.id.reveal);
@@ -220,7 +231,15 @@ public class CreateProfileActivity extends BaseActionBarActivity implements Inje
       public void onTextChanged(CharSequence s, int start, int before, int count) {}
       @Override
       public void afterTextChanged(Editable s) {
-        if (s.toString().getBytes().length > ProfileCipher.NAME_PADDED_LENGTH) {
+        Pattern pattern = Pattern.compile("[a-zA-Z0-9_]+");
+        Matcher matcher = pattern.matcher(s.toString());
+        if (s.toString().isEmpty()) {
+          name.getInput().setError("Invalid");
+          finishButton.setEnabled(false);
+        } else if (!matcher.matches()) {
+          name.getInput().setError("Invalid (a-z, A-Z, 0-9 and _ only)");
+          finishButton.setEnabled(false);
+        } else if (s.toString().getBytes().length > ProfileCipher.NAME_PADDED_LENGTH) {
           name.getInput().setError(getString(R.string.CreateProfileActivity_too_long));
           finishButton.setEnabled(false);
         } else if (name.getInput().getError() != null || !finishButton.isEnabled()) {
@@ -284,6 +303,7 @@ public class CreateProfileActivity extends BaseActionBarActivity implements Inje
         @Override
         protected void onPostExecute(byte[] result) {
           if (result != null) {
+            originalAvatarBytes = result;
             avatarBytes = result;
             GlideApp.with(CreateProfileActivity.this)
                     .load(result)
@@ -297,6 +317,7 @@ public class CreateProfileActivity extends BaseActionBarActivity implements Inje
         @Override
         public void onSuccess(byte[] result) {
           if (result != null) {
+            originalAvatarBytes = result;
             avatarBytes = result;
             GlideApp.with(CreateProfileActivity.this)
                     .load(result)
@@ -314,17 +335,17 @@ public class CreateProfileActivity extends BaseActionBarActivity implements Inje
   }
 
   private void initializeEmojiInput() {
-    this.emojiToggle.attach(emojiDrawer);
+    this.emojiToggle.attach(mediaKeyboard);
 
     this.emojiToggle.setOnClickListener(v -> {
-      if (container.getCurrentInput() == emojiDrawer) {
+      if (container.getCurrentInput() == mediaKeyboard) {
         container.showSoftkey(name.getInput());
       } else {
-        container.show(name.getInput(), emojiDrawer);
+        container.show(name.getInput(), mediaKeyboard);
       }
     });
 
-    this.emojiDrawer.setEmojiEventListener(new EmojiDrawer.EmojiEventListener() {
+    this.mediaKeyboard.setProviders(0, new EmojiKeyboardProvider(this, new EmojiKeyboardProvider.EmojiEventListener() {
       @Override
       public void onKeyEvent(KeyEvent keyEvent) {
         name.dispatchKeyEvent(keyEvent);
@@ -338,9 +359,9 @@ public class CreateProfileActivity extends BaseActionBarActivity implements Inje
         name.getText().replace(Math.min(start, end), Math.max(start, end), emoji);
         name.getInput().setSelection(start + emoji.length());
       }
-    });
+    }));
 
-    this.container.addOnKeyboardShownListener(() -> emojiToggle.setToEmoji());
+    this.container.addOnKeyboardShownListener(() -> emojiToggle.setToMedia());
     this.name.setOnClickListener(v -> container.showSoftkey(name.getInput()));
   }
 
@@ -363,35 +384,57 @@ public class CreateProfileActivity extends BaseActionBarActivity implements Inje
       @Override
       protected Boolean doInBackground(Void... params) {
         Context context    = CreateProfileActivity.this;
-        byte[]  profileKey = ProfileKeyUtil.getProfileKey(CreateProfileActivity.this);
 
         TextSecurePreferences.setProfileName(context, name);
-
-        // Loki - Original code
-        // ========
-//        try {
-//          accountManager.setProfileName(profileKey, name);
-//          TextSecurePreferences.setProfileName(context, name);
-//        } catch (IOException e) {
-//          Log.w(TAG, e);
-//          return false;
-//        }
-        // ========
-
-        try {
-          // Loki - Original code
-          // ========
-          // accountManager.setProfileAvatar(profileKey, avatar);
-          // ========
-          AvatarHelper.setAvatar(CreateProfileActivity.this, Address.fromSerialized(TextSecurePreferences.getLocalNumber(context)), avatarBytes);
-          TextSecurePreferences.setProfileAvatarId(CreateProfileActivity.this, new SecureRandom().nextInt());
-        } catch (IOException e) {
-          Log.w(TAG, e);
-          return false;
+        LokiPublicChatAPI publicChatAPI = ApplicationContext.getInstance(context).getLokiPublicChatAPI();
+        if (publicChatAPI != null) {
+          Set<String> servers = DatabaseFactory.getLokiThreadDatabase(context).getAllPublicChatServers();
+          for (String server : servers) {
+            publicChatAPI.setDisplayName(name, server);
+          }
         }
 
-        ApplicationContext.getInstance(context).getJobManager().add(new MultiDeviceProfileKeyUpdateJob());
+        // Loki - Only update avatar if there was a change
+        if (!Arrays.equals(originalAvatarBytes, avatarBytes)) {
+          try {
+            // Loki - Original profile photo code
+            // ========
+            // accountManager.setProfileAvatar(profileKey, avatar);
+            // ========
 
+            // Try upload photo with a new profile key
+            String newProfileKey = ProfileKeyUtil.generateEncodedProfileKey(context);
+            byte[] profileKey = ProfileKeyUtil.getProfileKeyFromEncodedString(newProfileKey);
+
+            //Loki - Upload the profile photo here
+            if (avatar != null) {
+              Log.d("Loki", "Start uploading profile photo");
+              LokiFileServerAPI storageAPI = LokiFileServerAPI.shared;
+              LokiDotNetAPI.UploadResult result = storageAPI.uploadProfilePicture(storageAPI.getServer(), profileKey, avatar, () -> {
+                TextSecurePreferences.setLastProfilePictureUpload(CreateProfileActivity.this, new Date().getTime());
+                return Unit.INSTANCE;
+              });
+              Log.d("Loki", "Profile photo uploaded, the url is " + result.getUrl());
+              TextSecurePreferences.setProfileAvatarUrl(context, result.getUrl());
+            } else {
+              TextSecurePreferences.setProfileAvatarUrl(context, null);
+            }
+
+            AvatarHelper.setAvatar(context, Address.fromSerialized(TextSecurePreferences.getLocalNumber(context)), avatarBytes);
+            TextSecurePreferences.setProfileAvatarId(context, new SecureRandom().nextInt());
+
+            // Upload was successful with this new profile key, we should set it so the other users know to re-fetch profiles
+            ProfileKeyUtil.setEncodedProfileKey(context, newProfileKey);
+
+            // Update profile key on the public chat server
+            ApplicationContext.getInstance(context).updatePublicChatProfilePictureIfNeeded();
+          } catch (Exception e) {
+            Log.d("Loki", "Failed to upload profile photo: " + e);
+            return false;
+          }
+        }
+
+        // ApplicationContext.getInstance(context).getJobManager().add(new MultiDeviceProfileKeyUpdateJob());
         return true;
       }
 

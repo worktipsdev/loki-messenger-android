@@ -12,6 +12,7 @@ import org.thoughtcrime.securesms.ApplicationContext;
 import org.thoughtcrime.securesms.attachments.Attachment;
 import org.thoughtcrime.securesms.attachments.DatabaseAttachment;
 import org.thoughtcrime.securesms.crypto.UnidentifiedAccessUtil;
+import org.thoughtcrime.securesms.crypto.storage.TextSecureSessionStore;
 import org.thoughtcrime.securesms.database.Address;
 import org.thoughtcrime.securesms.database.DatabaseFactory;
 import org.thoughtcrime.securesms.database.GroupReceiptDatabase.GroupReceiptInfo;
@@ -20,6 +21,7 @@ import org.thoughtcrime.securesms.database.NoSuchMessageException;
 import org.thoughtcrime.securesms.database.documents.IdentityKeyMismatch;
 import org.thoughtcrime.securesms.database.documents.NetworkFailure;
 import org.thoughtcrime.securesms.dependencies.InjectableType;
+import org.thoughtcrime.securesms.groups.GroupManager;
 import org.thoughtcrime.securesms.jobmanager.Data;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.JobManager;
@@ -29,9 +31,12 @@ import org.thoughtcrime.securesms.mms.MmsException;
 import org.thoughtcrime.securesms.mms.OutgoingGroupMediaMessage;
 import org.thoughtcrime.securesms.mms.OutgoingMediaMessage;
 import org.thoughtcrime.securesms.recipients.Recipient;
+import org.thoughtcrime.securesms.sms.MessageSender;
 import org.thoughtcrime.securesms.transport.RetryLaterException;
 import org.thoughtcrime.securesms.transport.UndeliverableMessageException;
 import org.thoughtcrime.securesms.util.GroupUtil;
+import org.thoughtcrime.securesms.util.TextSecurePreferences;
+import org.whispersystems.libsignal.SignalProtocolAddress;
 import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.SignalServiceMessageSender;
 import org.whispersystems.signalservice.api.crypto.UnidentifiedAccessPair;
@@ -45,9 +50,14 @@ import org.whispersystems.signalservice.api.messages.SignalServiceGroup;
 import org.whispersystems.signalservice.api.messages.shared.SharedContact;
 import org.whispersystems.signalservice.api.push.SignalServiceAddress;
 import org.whispersystems.signalservice.internal.push.SignalServiceProtos.GroupContext;
+import org.whispersystems.signalservice.loki.api.LokiDeviceLinkUtilities;
+import org.whispersystems.signalservice.loki.api.LokiPublicChat;
+import org.whispersystems.signalservice.loki.utilities.PromiseUtil;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
@@ -98,7 +108,7 @@ public class PushGroupSendJob extends PushSendJob implements InjectableType {
       attachments.addAll(Stream.of(message.getLinkPreviews()).filter(p -> p.getThumbnail().isPresent()).map(p -> p.getThumbnail().get()).toList());
       attachments.addAll(Stream.of(message.getSharedContacts()).filter(c -> c.getAvatar() != null).map(c -> c.getAvatar().getAttachment()).withoutNulls().toList());
 
-      List<AttachmentUploadJob> attachmentJobs = Stream.of(attachments).map(a -> new AttachmentUploadJob(((DatabaseAttachment) a).getAttachmentId())).toList();
+      List<AttachmentUploadJob> attachmentJobs = Stream.of(attachments).map(a -> new AttachmentUploadJob(((DatabaseAttachment) a).getAttachmentId(), destination)).toList();
 
       if (attachmentJobs.isEmpty()) {
         jobManager.add(new PushGroupSendJob(messageId, destination, filterAddress));
@@ -155,7 +165,30 @@ public class PushGroupSendJob extends PushSendJob implements InjectableType {
       else if (!existingNetworkFailures.isEmpty()) target = Stream.of(existingNetworkFailures).map(NetworkFailure::getAddress).toList();
       else                                         target = getGroupMessageRecipients(message.getRecipient().getAddress().toGroupString(), messageId);
 
-      List<SendMessageResult>   results                  = deliver(message, target);
+      String localNumber = TextSecurePreferences.getLocalNumber(context);
+
+      // Only send messages to the contacts we have sessions with
+      List<Address> validTargets = Stream.of(target).filter(member -> {
+        if (member.isPublicChat()) { return true; }
+
+        // Our device is always valid
+        if (member.serialize().equalsIgnoreCase(localNumber)) { return true; }
+
+        SignalProtocolAddress protocolAddress = new SignalProtocolAddress(member.toPhoneString(), SignalServiceAddress.DEFAULT_DEVICE_ID);
+        boolean hasSession = new TextSecureSessionStore(context).containsSession(protocolAddress);
+        if (hasSession) { return true; }
+
+        // We should allow sending if we have a prekeybundle for the contact
+        return DatabaseFactory.getLokiPreKeyBundleDatabase(context).hasPreKeyBundle(member.toPhoneString());
+      }).toList();
+
+      // Send a session request to the other devices
+      List<Address> others = Stream.of(target).filter(t -> !validTargets.contains(t)).toList();
+      for (Address device : others) {
+        MessageSender.sendBackgroundSessionRequest(context, device.toPhoneString());
+      }
+
+      List<SendMessageResult>   results                  = deliver(message, validTargets);
       List<NetworkFailure>      networkFailures          = Stream.of(results).filter(SendMessageResult::isNetworkFailure).map(result -> new NetworkFailure(Address.fromSerialized(result.getAddress().getNumber()))).toList();
       List<IdentityKeyMismatch> identityMismatches       = Stream.of(results).filter(result -> result.getIdentityFailure() != null).map(result -> new IdentityKeyMismatch(Address.fromSerialized(result.getAddress().getNumber()), result.getIdentityFailure().getIdentityKey())).toList();
       Set<Address>              successAddresses         = Stream.of(results).filter(result -> result.getSuccess() != null).map(result -> Address.fromSerialized(result.getAddress().getNumber())).collect(Collectors.toSet());
@@ -212,9 +245,11 @@ public class PushGroupSendJob extends PushSendJob implements InjectableType {
   }
 
   @Override
-  public boolean onShouldRetry(Exception exception) {
+  public boolean onShouldRetry(@NonNull Exception exception) {
     if (exception instanceof IOException)         return true;
-    if (exception instanceof RetryLaterException) return true;
+
+    // Loki - Disable since we have our own retrying
+    // if (exception instanceof RetryLaterException) return true;
     return false;
   }
 
@@ -225,15 +260,25 @@ public class PushGroupSendJob extends PushSendJob implements InjectableType {
 
   private List<SendMessageResult> deliver(OutgoingMediaMessage message, @NonNull List<Address> destinations)
       throws IOException, UntrustedIdentityException, UndeliverableMessageException {
-    rotateSenderCertificateIfNecessary();
+    // rotateSenderCertificateIfNecessary();
 
-    String                        groupId            = message.getRecipient().getAddress().toGroupString();
-    Optional<byte[]>              profileKey         = getProfileKey(message.getRecipient());
-    Optional<Quote>               quote              = getQuoteFor(message);
-    List<SharedContact>           sharedContacts     = getSharedContactsFor(message);
-    List<Preview>                 previews           = getPreviewsFor(message);
-    List<SignalServiceAddress>    addresses          = Stream.of(destinations).map(this::getPushAddress).toList();
-    List<SignalServiceAttachment> attachmentPointers = getAttachmentPointersFor(message.getAttachments());
+    // Messages shouldn't be able to be sent to RSS Feeds
+    Address groupAddress = message.getRecipient().getAddress();
+    if (groupAddress.isRSSFeed()) {
+      List<SendMessageResult> results = new ArrayList<>();
+      for (Address destination : destinations) results.add(SendMessageResult.networkFailure(new SignalServiceAddress(destination.toPhoneString())));
+      return results;
+    }
+
+    String                                     groupId            = groupAddress.toGroupString();
+    Optional<byte[]>                           profileKey         = getProfileKey(message.getRecipient());
+    Optional<Quote>                            quote              = getQuoteFor(message);
+    Optional<SignalServiceDataMessage.Sticker> sticker            = getStickerFor(message);
+    List<SharedContact>                        sharedContacts     = getSharedContactsFor(message);
+    List<Preview>                              previews           = getPreviewsFor(message);
+    List<SignalServiceAddress>                 addresses          = Stream.of(destinations).map(this::getPushAddress).toList();
+    List<Attachment>                           attachments        = Stream.of(message.getAttachments()).filterNot(Attachment::isSticker).toList();
+    List<SignalServiceAttachment>              attachmentPointers = getAttachmentPointersFor(attachments);
 
     List<Optional<UnidentifiedAccessPair>> unidentifiedAccess = Stream.of(addresses)
                                                                       .map(address -> Address.fromSerialized(address.getNumber()))
@@ -241,22 +286,28 @@ public class PushGroupSendJob extends PushSendJob implements InjectableType {
                                                                       .map(recipient -> UnidentifiedAccessUtil.getAccessFor(context, recipient))
                                                                       .toList();
 
-    if (message.isGroup()) {
+    SignalServiceGroup.GroupType groupType = SignalServiceGroup.GroupType.SIGNAL;
+    if (groupAddress.isPublicChat()) {
+      groupType = SignalServiceGroup.GroupType.PUBLIC_CHAT;
+    }
+
+    if (message.isGroup() && groupAddress.isSignalGroup()) {
+      // Loki - Only send GroupUpdate or GroupQuit to signal groups
       OutgoingGroupMediaMessage groupMessage     = (OutgoingGroupMediaMessage) message;
       GroupContext              groupContext     = groupMessage.getGroupContext();
       SignalServiceAttachment   avatar           = attachmentPointers.isEmpty() ? null : attachmentPointers.get(0);
       SignalServiceGroup.Type   type             = groupMessage.isGroupQuit() ? SignalServiceGroup.Type.QUIT : SignalServiceGroup.Type.UPDATE;
-      SignalServiceGroup        group            = new SignalServiceGroup(type, GroupUtil.getDecodedId(groupId), groupContext.getName(), groupContext.getMembersList(), avatar);
+      SignalServiceGroup        group            = new SignalServiceGroup(type, GroupUtil.getDecodedId(groupId), groupType, groupContext.getName(), groupContext.getMembersList(), avatar, groupContext.getAdminsList());
       SignalServiceDataMessage  groupDataMessage = SignalServiceDataMessage.newBuilder()
                                                                            .withTimestamp(message.getSentTimeMillis())
                                                                            .withExpiration(message.getRecipient().getExpireMessages())
+                                                                           .withBody(message.getBody())
                                                                            .asGroupMessage(group)
                                                                            .build();
 
-      // TODO: Message ID
-      return messageSender.sendMessage(0, addresses, unidentifiedAccess, groupDataMessage);
+      return messageSender.sendMessage(messageId, addresses, unidentifiedAccess, groupDataMessage);
     } else {
-      SignalServiceGroup       group        = new SignalServiceGroup(GroupUtil.getDecodedId(groupId));
+      SignalServiceGroup       group        = new SignalServiceGroup(GroupUtil.getDecodedId(groupId), groupType);
       SignalServiceDataMessage groupMessage = SignalServiceDataMessage.newBuilder()
                                                                       .withTimestamp(message.getSentTimeMillis())
                                                                       .asGroupMessage(group)
@@ -266,21 +317,72 @@ public class PushGroupSendJob extends PushSendJob implements InjectableType {
                                                                       .asExpirationUpdate(message.isExpirationUpdate())
                                                                       .withProfileKey(profileKey.orNull())
                                                                       .withQuote(quote.orNull())
+                                                                      .withSticker(sticker.orNull())
                                                                       .withSharedContacts(sharedContacts)
                                                                       .withPreviews(previews)
                                                                       .build();
 
-      // TODO: Message ID
-      return messageSender.sendMessage(0, addresses, unidentifiedAccess, groupMessage);
+      return messageSender.sendMessage(messageId, addresses, unidentifiedAccess, groupMessage);
     }
   }
 
   private @NonNull List<Address> getGroupMessageRecipients(String groupId, long messageId) {
-    List<GroupReceiptInfo> destinations = DatabaseFactory.getGroupReceiptDatabase(context).getGroupReceiptInfo(messageId);
-    if (!destinations.isEmpty()) return Stream.of(destinations).map(GroupReceiptInfo::getAddress).toList();
+    if (GroupUtil.isRssFeed(groupId)) { return new ArrayList<>(); }
 
-    List<Recipient> members = DatabaseFactory.getGroupDatabase(context).getGroupMembers(groupId, false);
-    return Stream.of(members).map(Recipient::getAddress).toList();
+    // Loki - All public chat group messages should be directed to their respective servers
+    if (GroupUtil.isPublicChat(groupId)) {
+      ArrayList<Address> result = new ArrayList<>();
+      long threadID = GroupManager.getThreadIdFromGroupId(groupId, context);
+      LokiPublicChat publicChat = DatabaseFactory.getLokiThreadDatabase(context).getPublicChat(threadID);
+      if (publicChat != null) {
+        result.add(Address.fromSerialized(groupId));
+      }
+      return result;
+    } else {
+      /*
+        Our biggest assumption here is that group members will only consist of primary devices.
+        No secondary device should be able to be added to a group.
+       */
+      List<GroupReceiptInfo> destinations = DatabaseFactory.getGroupReceiptDatabase(context).getGroupReceiptInfo(messageId);
+
+      Set<Address> memberSet = new HashSet<>();
+      if (destinations.isEmpty()) {
+        List<Recipient> groupMembers = DatabaseFactory.getGroupDatabase(context).getGroupMembers(groupId, false);
+        memberSet.addAll(Stream.of(groupMembers).map(Recipient::getAddress).toList());
+      } else {
+        memberSet.addAll(Stream.of(destinations).map(GroupReceiptInfo::getAddress).toList());
+      }
+
+      // Replace primary device public key with ours so message syncing works correctly
+      String masterHexEncodedPublicKey = TextSecurePreferences.getMasterHexEncodedPublicKey(context);
+      String localNumber = TextSecurePreferences.getLocalNumber(context);
+      if (masterHexEncodedPublicKey != null &&  memberSet.contains(Address.fromSerialized(masterHexEncodedPublicKey))) {
+        memberSet.remove(Address.fromSerialized(masterHexEncodedPublicKey));
+        memberSet.add(Address.fromSerialized(localNumber));
+      }
+
+      // Add secondary devices to the list. We shouldn't add our secondary devices
+      try {
+        Set<Address> originalMemberSet = new HashSet<>(memberSet);
+        for (Address member : originalMemberSet) {
+          if (!member.isPhone() || member.serialize().equalsIgnoreCase(localNumber)) { continue; }
+
+          try {
+            Set<String> secondaryDevices = PromiseUtil.timeout(LokiDeviceLinkUtilities.INSTANCE.getSlaveHexEncodedPublicKeys(member.serialize()), 5000).get();
+            memberSet.addAll(Stream.of(secondaryDevices).map(string -> {
+              // Loki - Calling .map(Address::fromSerialized) is causing errors, thus we use the long method :(
+              return Address.fromSerialized(string);
+            }).toList());
+          } catch (Exception e) {
+            // Timed out, go to the next member
+          }
+        }
+      } catch (Exception e) {
+        Log.e("PushGroupSend", "Error occurred while adding secondary devices: " + e);
+      }
+
+      return new LinkedList<>(memberSet);
+    }
   }
 
   public static class Factory implements Job.Factory<PushGroupSendJob> {

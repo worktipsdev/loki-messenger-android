@@ -22,11 +22,10 @@ import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
-import android.text.TextUtils;
 
 import com.annimon.stream.function.Consumer;
 
-import network.loki.messenger.R;
+import org.greenrobot.eventbus.EventBus;
 import org.thoughtcrime.securesms.color.MaterialColor;
 import org.thoughtcrime.securesms.contacts.avatars.ContactColors;
 import org.thoughtcrime.securesms.contacts.avatars.ContactPhoto;
@@ -34,7 +33,6 @@ import org.thoughtcrime.securesms.contacts.avatars.FallbackContactPhoto;
 import org.thoughtcrime.securesms.contacts.avatars.GeneratedContactPhoto;
 import org.thoughtcrime.securesms.contacts.avatars.GroupRecordContactPhoto;
 import org.thoughtcrime.securesms.contacts.avatars.ProfileContactPhoto;
-import org.thoughtcrime.securesms.contacts.avatars.ResourceContactPhoto;
 import org.thoughtcrime.securesms.contacts.avatars.SystemContactPhoto;
 import org.thoughtcrime.securesms.contacts.avatars.TransparentContactPhoto;
 import org.thoughtcrime.securesms.database.Address;
@@ -45,10 +43,13 @@ import org.thoughtcrime.securesms.database.RecipientDatabase.RegisteredState;
 import org.thoughtcrime.securesms.database.RecipientDatabase.UnidentifiedAccessMode;
 import org.thoughtcrime.securesms.database.RecipientDatabase.VibrateState;
 import org.thoughtcrime.securesms.logging.Log;
+import org.thoughtcrime.securesms.loki.JazzIdenticonContactPhoto;
+import org.thoughtcrime.securesms.loki.RecipientAvatarModifiedEvent;
 import org.thoughtcrime.securesms.notifications.NotificationChannels;
 import org.thoughtcrime.securesms.recipients.RecipientProvider.RecipientDetails;
 import org.thoughtcrime.securesms.util.FutureTaskListener;
 import org.thoughtcrime.securesms.util.ListenableFutureTask;
+import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.thoughtcrime.securesms.util.Util;
 import org.whispersystems.libsignal.util.guava.Optional;
 
@@ -59,6 +60,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ExecutionException;
+
+import network.loki.messenger.R;
 
 public class Recipient implements RecipientModifiedListener {
 
@@ -81,7 +84,7 @@ public class Recipient implements RecipientModifiedListener {
   private           Uri                  contactUri;
   private @Nullable Uri                  messageRingtone       = null;
   private @Nullable Uri                  callRingtone          = null;
-  private           long                 mutedUntil            = 0;
+  public            long                 mutedUntil            = 0;
   private           boolean              blocked               = false;
   private           VibrateState         messageVibrate        = VibrateState.DEFAULT;
   private           VibrateState         callVibrate           = VibrateState.DEFAULT;
@@ -98,7 +101,7 @@ public class Recipient implements RecipientModifiedListener {
   private           String         notificationChannel;
   private           boolean        forceSmsSelection;
 
-  private @NonNull  UnidentifiedAccessMode unidentifiedAccessMode = UnidentifiedAccessMode.DISABLED;
+  private @NonNull  UnidentifiedAccessMode unidentifiedAccessMode = UnidentifiedAccessMode.ENABLED;
 
   @SuppressWarnings("ConstantConditions")
   public static @NonNull Recipient from(@NonNull Context context, @NonNull Address address, boolean asynchronous) {
@@ -274,6 +277,11 @@ public class Recipient implements RecipientModifiedListener {
     return isLocalNumber;
   }
 
+  public boolean isOurMasterDevice() {
+    String ourMasterDevice = TextSecurePreferences.getMasterHexEncodedPublicKey(context);
+    return ourMasterDevice != null && ourMasterDevice.equals(getAddress().serialize());
+  }
+
   public synchronized @Nullable Uri getContactUri() {
     return this.contactUri;
   }
@@ -292,7 +300,7 @@ public class Recipient implements RecipientModifiedListener {
   }
 
   public synchronized @Nullable String getName() {
-    String displayName = DatabaseFactory.getLokiUserDisplayNameDatabase(context).getDisplayName(this.address.toString());
+    String displayName = DatabaseFactory.getLokiUserDatabase(context).getDisplayName(this.address.toString());
     if (displayName != null) { return displayName; }
 
     if (this.name == null && isMmsGroupRecipient()) {
@@ -391,6 +399,7 @@ public class Recipient implements RecipientModifiedListener {
     }
 
     notifyListeners();
+    EventBus.getDefault().post(new RecipientAvatarModifiedEvent(this));
   }
 
   public synchronized boolean isProfileSharing() {
@@ -454,15 +463,19 @@ public class Recipient implements RecipientModifiedListener {
   }
 
   public synchronized @NonNull FallbackContactPhoto getFallbackContactPhoto() {
-    if      (isLocalNumber)            return new ResourceContactPhoto(R.drawable.ic_note_to_self);
     if      (isResolving())            return new TransparentContactPhoto();
-    else if (isGroupRecipient())       return new ResourceContactPhoto(R.drawable.ic_group_white_24dp, R.drawable.ic_group_large);
-    else if (!TextUtils.isEmpty(name)) return new GeneratedContactPhoto(name, R.drawable.ic_profile_default);
-    else                               return new ResourceContactPhoto(R.drawable.ic_profile_default, R.drawable.ic_person_large);
+    else if (isGroupRecipient())       return new GeneratedContactPhoto(name, R.drawable.ic_profile_default);
+    else {
+      String currentUser = TextSecurePreferences.getLocalNumber(context);
+      String recipientAddress = address.serialize();
+      String primaryAddress = TextSecurePreferences.getMasterHexEncodedPublicKey(context);
+      String profileAddress = (recipientAddress.equalsIgnoreCase(currentUser) && primaryAddress != null) ? primaryAddress : recipientAddress;
+      return new JazzIdenticonContactPhoto(profileAddress);
+    }
   }
 
   public synchronized @Nullable ContactPhoto getContactPhoto() {
-    if      (isLocalNumber)                               return null;
+    if      (isLocalNumber)                               return new ProfileContactPhoto(address, String.valueOf(TextSecurePreferences.getProfileAvatarId(context)));
     else if (isGroupRecipient() && groupAvatarId != null) return new GroupRecordContactPhoto(address, groupAvatarId);
     else if (systemContactPhoto != null)                  return new SystemContactPhoto(address, systemContactPhoto, 0);
     else if (profileAvatar != null)                       return new ProfileContactPhoto(address, profileAvatar);
@@ -660,7 +673,7 @@ public class Recipient implements RecipientModifiedListener {
     notifyListeners();
   }
 
-  public synchronized UnidentifiedAccessMode getUnidentifiedAccessMode() {
+  public @NonNull synchronized UnidentifiedAccessMode getUnidentifiedAccessMode() {
     return unidentifiedAccessMode;
   }
 

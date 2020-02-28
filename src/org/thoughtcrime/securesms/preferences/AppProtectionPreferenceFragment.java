@@ -12,10 +12,8 @@ import android.support.v7.preference.Preference;
 import android.widget.Toast;
 
 import org.thoughtcrime.securesms.ApplicationContext;
-import org.thoughtcrime.securesms.ApplicationPreferencesActivity;
 import org.thoughtcrime.securesms.BlockedContactsActivity;
 import org.thoughtcrime.securesms.PassphraseChangeActivity;
-import network.loki.messenger.R;
 import org.thoughtcrime.securesms.components.SwitchPreferenceCompat;
 import org.thoughtcrime.securesms.crypto.MasterSecretUtil;
 import org.thoughtcrime.securesms.dependencies.InjectableType;
@@ -32,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 import javax.inject.Inject;
 
 import mobi.upod.timedurationpicker.TimeDurationPickerDialog;
+import network.loki.messenger.R;
 
 public class AppProtectionPreferenceFragment extends CorrectedPreferenceFragment implements InjectableType {
 
@@ -81,8 +80,6 @@ public class AppProtectionPreferenceFragment extends CorrectedPreferenceFragment
   @Override
   public void onResume() {
     super.onResume();
-    ((ApplicationPreferencesActivity) getActivity()).getSupportActionBar().setTitle(R.string.preferences__privacy);
-
     if (!TextSecurePreferences.isPasswordDisabled(getContext())) initializePassphraseTimeoutSummary();
     else                                                         initializeScreenLockTimeoutSummary();
 
@@ -128,6 +125,7 @@ public class AppProtectionPreferenceFragment extends CorrectedPreferenceFragment
     @Override
     public boolean onPreferenceChange(Preference preference, Object newValue) {
       boolean enabled = (Boolean)newValue;
+
       TextSecurePreferences.setScreenLockEnabled(getContext(), enabled);
 
       Intent intent = new Intent(getContext(), KeyCachingService.class);
@@ -197,6 +195,7 @@ public class AppProtectionPreferenceFragment extends CorrectedPreferenceFragment
     @Override
     public boolean onPreferenceChange(Preference preference, Object newValue) {
       boolean enabled = (boolean)newValue;
+
       ApplicationContext.getInstance(getContext())
                         .getJobManager()
                         .add(new MultiDeviceConfigurationUpdateJob(TextSecurePreferences.isReadReceiptsEnabled(requireContext()),
@@ -216,6 +215,26 @@ public class AppProtectionPreferenceFragment extends CorrectedPreferenceFragment
     @Override
     public boolean onPreferenceChange(Preference preference, Object newValue) {
       boolean enabled = (boolean)newValue;
+
+      if (enabled) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(requireContext());
+        builder.setTitle("Enable Link Previews?");
+        builder.setMessage("You will not have full metadata protection when sending or receiving link previews.");
+        builder.setPositiveButton("OK", (dialog, which) -> dialog.dismiss());
+        builder.setNegativeButton("Cancel", (dialog, which) -> {
+          TextSecurePreferences.setLinkPreviewsEnabled(requireContext(), false);
+          ((SwitchPreferenceCompat)AppProtectionPreferenceFragment.this.findPreference(TextSecurePreferences.LINK_PREVIEWS)).setChecked(false);
+          ApplicationContext.getInstance(requireContext())
+                  .getJobManager()
+                  .add(new MultiDeviceConfigurationUpdateJob(TextSecurePreferences.isReadReceiptsEnabled(requireContext()),
+                          TextSecurePreferences.isTypingIndicatorsEnabled(requireContext()),
+                          TextSecurePreferences.isShowUnidentifiedDeliveryIndicatorsEnabled(requireContext()),
+                          false));
+          dialog.dismiss();
+        });
+        builder.create().show();
+      }
+
       ApplicationContext.getInstance(requireContext())
                         .getJobManager()
                         .add(new MultiDeviceConfigurationUpdateJob(TextSecurePreferences.isReadReceiptsEnabled(requireContext()),
